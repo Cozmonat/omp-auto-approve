@@ -214,14 +214,17 @@ export class BashGate {
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Risk threshold crossed (or no usable verdict).  fallback=ask with a UI
-    // consults the deep model: when it re-analyzes and clears the command
-    // (no real risk at the configured threshold) it is auto-approved;
-    // otherwise a user dialog is shown. Every other path blocks without
-    // asking. The toast is always emitted regardless of the display setting;
-    // the tool card carries the model-visible denial text, which never
-    // repeats the raw command.
-    if (cfg.fallback === "ask" && ctx.hasUI) {
+    // Only a real first-pass verdict may escalate to the deep pass. When the
+    // judge is unavailable or produced no usable verdict, a deep-model "clear"
+    // must not authorize execution: the deep model is the weakest in the
+    // stack, so a broken primary judge fails closed instead of handing
+    // approval authority to it. (A truncated override still carries a real
+    // verdict, so over-budget commands keep their human dialog.)
+    const deepEscalation = outcome.kind === "verdict" && cfg.fallback === "ask" && ctx.hasUI;
+    if (cfg.fallback === "ask" && ctx.hasUI && outcome.kind !== "verdict") {
+      logger.log(`bash: first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
+    }
+    if (deepEscalation) {
       const { deepInvoker } = this.deps;
       const deep = await runDeepAnalysis(
         deepInvoker,

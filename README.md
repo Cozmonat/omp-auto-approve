@@ -1,6 +1,6 @@
 # auto-approve
 
-Judge-model auto-approval for **oh-my-pi (OMP)**: a persistent `omp --mode rpc` child runs the `@judge` model role as a one-shot risk assessor for every bash command. Low-risk commands execute with zero interruption; everything at or above the risk threshold fails closed — or, with `fallback: "ask"`, a second (deeper, cheaper) model re-analyzes it: a command that model clears is auto-approved, and only a command it flags as genuinely risky is shown in a dialog for the user to decide.
+Judge-model auto-approval for **oh-my-pi (OMP)**: a persistent `omp --mode rpc` child runs the `@judge` model role as a one-shot risk assessor for every bash command. Low-risk commands execute with zero interruption; everything at or above the risk threshold fails closed — or, with `fallback: "ask"`, a second (deeper, cheaper) model re-analyzes a command the first-pass judge *actually flagged*: one that model clears is auto-approved, and only one it flags as genuinely risky is shown in a dialog for the user to decide. When the judge cannot verdict at all (unavailable, or no usable reply), commands block under every fallback — the deep model never substitutes for a broken judge.
 
 Covered execution surface:
 
@@ -27,7 +27,9 @@ BashGate.execute()
    │
    ├─ verdict allow and risk below blockRisk ────────► delegate + display surfaces
    │
-   └─ block (recommend deny / risk ≥ blockRisk / no usable verdict)
+   └─ block (the judge flagged it: recommend deny / risk ≥ blockRisk)
+         (judge unavailable or no usable verdict → always block, under every
+          fallback: the deep model is never a substitute for the first-pass judge)
          │
          ├─ fallback: "block" (default)
          │     no second model call — marker line (if display is marker/both),
@@ -52,7 +54,7 @@ BashGate.execute()
                                                               "user denied" toast
 ```
 
-Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide — the common `block` path never launches the deep model.
+Stage 2 is only ever paid when a verdict the judge actually produced crosses the threshold (or the command is over budget) and `fallback: "ask"` coincides — the common `block` path never launches the deep model, and neither does a broken or verdict-less judge.
 
 ## Judge model
 
@@ -110,7 +112,7 @@ File: `~/.omp/agent/auto-approve.json` (created on first write-back). Runtime sw
 | `enabled` | `true` | yes | yes | Master switch; `false` delegates every bash call to the native tool |
 | `display` | `both` | yes | yes | `off` \| `marker` \| `both` — where approval markers appear; blocked verdicts are always visible |
 | `blockRisk` | `high` | yes | yes | `medium` \| `high` — minimum judge risk level that blocks |
-| `fallback` | `block` | yes | yes | `block` \| `ask` — policy when the risk threshold is crossed or no usable verdict arrives; `ask` runs a deep-analysis model that auto-approves a cleared command or opens a dialog for a risky one (degrades to `block` without a UI) |
+| `fallback` | `block` | yes | yes | `block` \| `ask` — policy when the risk threshold is crossed; `ask` runs a deep-analysis model over commands the first-pass judge flagged, auto-approving a cleared one or opening a dialog for a risky one (degrades to `block` without a UI; a judge that never verdicts always blocks, never consulting the deep model) |
 | `model` | `@judge` | — | — | Judge model role for stage-1 verdicts (file-only) |
 | `deepModel` | `@tiny` | — | — | Deep-analysis model for stage 2; `@smol` is tried automatically when it is unavailable (file-only) |
 | `timeoutMs` | `30000` | — | — | Per-attempt timeout for judge and deep-analysis prompts (`0` = none) |
@@ -140,9 +142,9 @@ AutoApprove (orchestrator — registers tool, command, shutdown hook)
                       by the extension itself
 ```
 
-Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/logs/auto-approve.log`): identifiers and verdicts only — never the raw command.
+Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + working directory + session-context + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/logs/auto-approve.log`): identifiers and verdicts only — never the raw command.
 
-**Fail-closed everywhere**: host binary unresolved, child crash, prompt timeout, or an unreadable verdict all produce a block. The only path that runs a command the first-pass judge flagged is `fallback: "ask"` with a UI, and even then it runs only when the deep model re-analyzes and clears it (no real risk at the threshold) or the user affirms it in the dialog. Nothing executes on uncertainty.
+**Fail-closed everywhere**: host binary unresolved, child crash, prompt timeout, or an unreadable verdict all produce a block — under every `fallback`, with a UI or headless. The deep pass only re-analyzes commands the first-pass judge *actually flagged*; when the judge itself is unavailable or produced no usable verdict, the command blocks and the deep model is never consulted, so a broken judge can never become the approver. The only other path that runs a flagged command is `fallback: "ask"` with a UI, where it runs only when the deep model clears it or the user affirms it in the dialog. Nothing executes on uncertainty.
 
 ## Install
 

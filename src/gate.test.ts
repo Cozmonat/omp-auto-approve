@@ -565,6 +565,39 @@ describe("BashGate fallback escalation", () => {
     expect(calls).toHaveLength(1);
     await rig.dispose();
   });
+
+  test("fallback=ask + UI: a broken judge (no child) blocks without consulting the deep model", async () => {
+    // Regression: when the primary judge is unavailable, the deep model must
+    // not become the approver — a deep "clear" must not authorize execution
+    // of a command the judge never actually assessed.
+    const { factory, children } = fakeChildFactory([{ dead: true }], { dead: true });
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"cleared"}' });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_t, choices) => choices[0] });
+    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(rig.deepChildren).toHaveLength(0); // deep model never consulted
+    expect(dialogs).toHaveLength(0);
+    expect(result.content[0].text).toContain("could not be consulted");
+    await rig.dispose();
+  });
+
+  test("fallback=ask + UI: a judge with no usable verdict blocks without the deep model", async () => {
+    // A non-chat judge role (or any empty completion) means the command was
+    // never assessed: fail closed, do not let the deep model clear it.
+    const { factory, children } = fakeChildFactory([{ replyText: "I cannot judge that" }], {});
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"cleared"}' });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_t, choices) => choices[0] });
+    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(rig.deepChildren).toHaveLength(0); // deep model never consulted
+    expect(dialogs).toHaveLength(0);
+    expect(result.content[0].text).toContain("did not produce a usable risk verdict");
+    await rig.dispose();
+  });
 });
 
 describe("BashGate headless", () => {
