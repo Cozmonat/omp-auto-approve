@@ -65,9 +65,10 @@ describe("locale parity", () => {
 
   test("format substitutes numbered placeholders in order", () => {
     const en = createI18n("en");
-    expect(en.format("notifyApproved", "low", ": does a git push")).toBe(
-      "✅ Auto-approved (low): does a git push",
+    expect(en.format("notifyApproved", "low risk", ": reads only local files")).toBe(
+      "✅ Auto-approved — low risk: reads only local files",
     );
+    expect(en.format("notifyApproved", "deep review", "")).toBe("✅ Auto-approved — deep review");
   });
 
   test("unknown keys return the key itself (never crash)", () => {

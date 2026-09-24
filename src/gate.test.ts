@@ -533,7 +533,7 @@ describe("BashGate fallback escalation", () => {
     expect(calls).toHaveLength(1);
     expect(deep.children).toHaveLength(1); // only the deep model was consulted
     expect(dialogs).toHaveLength(0); // deep model cleared it — no dialog
-    expect(notifications.some((n) => n.level === "info" && n.msg.includes("deep analysis"))).toBe(true);
+    expect(notifications.some((n) => n.level === "info" && n.msg.includes("deep review"))).toBe(true);
     await rig.dispose();
   });
 
