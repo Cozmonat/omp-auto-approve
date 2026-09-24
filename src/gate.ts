@@ -1,18 +1,22 @@
 /**
- * Auto Approve — bash gate.
+ * Auto Approve — tool gate.
  *
- * BashGate shadows the native `bash` built-in via registerTool.  Two-stage
- * decision: a first-pass risk verdict from the judge model through the
- * persistent RPC child (judge.ts), then pure policy (policy.ts).  Below the
- * threshold the call delegates to the native tool via ctx.invokeTool
+ * ToolGate shadows a native built-in tool (bash, eval) via registerTool.
+ * Two-stage decision: a first-pass risk verdict from the judge model through
+ * the persistent RPC child (judge.ts), then pure policy (policy.ts).  A
+ * judge that produces no output at all (a broken judge lane, e.g. a native
+ * System One / typesafe `judge` role) falls back to the @tiny → @smol chain
+ * re-running the judge's own prompt, keeping the no-output warning.  Below
+ * the threshold the call delegates to the native tool via ctx.invokeTool
  * (inheriting shell path resolution, env hardening, PTY and output
- * truncation).  Above the threshold: fallback=block denies; fallback=ask
- * consults a deep-analysis model (tiny, then smol), whose verdict either
- * auto-approves a cleared command or, on real risk, is reviewed by the user
- * in a dialog.  Headless sessions (no UI) never prompt — even with
- * fallback=ask they block, and the denial text tells the model
- * why (judge declined / risk rating / judge unavailable, plus a headless
- * note) so it can choose a safer alternative.
+ * truncation for bash; in-process execution for eval).  Above the
+ * threshold: fallback=block denies; fallback=ask consults a deep-analysis
+ * model (tiny, then smol), whose verdict either auto-approves a cleared
+ * command or, on real risk, is reviewed by the user in a dialog.  Headless
+ * sessions (no UI) never prompt — even with fallback=ask they block, and
+ * the denial text tells the model why (judge declined / risk rating /
+ * judge unavailable, plus a headless note) so it can choose a safer
+ * alternative.
  *
  * Surfaces per display setting: marker = streamed tool-card line,
  * notify = chat toast (UI sessions only).  Blocked verdicts are always
@@ -20,9 +24,12 @@
  */
 import {
   buildJudgePrompt,
+  DEEP_MODELS,
   JUDGE_MODEL,
   runDeepAnalysis,
+  runJudgeFallback,
   type JudgeInvoker,
+  type SubjectInfo,
 } from "./judge";
 import { SessionContextGatherer } from "./context";
 import { collectScriptContents, formatScriptSection } from "./scripts";
@@ -40,11 +47,11 @@ import type {
   ZodLike,
 } from "./types";
 
-export interface BashGateDeps {
+export interface ToolGateDeps {
   /** Runtime config store (enabled / display / blockRisk / fallback / models / timeouts). */
   config: ConfigStore;
   /** Session-context gatherer: compact conversation excerpts given to both
-   *  models as untrusted background for WHY the command runs. */
+   *  models as untrusted background for WHY the subject runs. */
   contextGatherer: SessionContextGatherer;
   i18n: I18n;
   logger: LoggerLike;
@@ -58,8 +65,28 @@ export interface BashGateDeps {
 export type ToolUpdateCallback =
   ((update: { content: unknown[]; details?: unknown }) => void) | undefined;
 
+/** Per-tool description of a shadowed built-in: how the gate registers it,
+ *  what it judges, and where the subject executes. */
+export interface ToolSpec {
+  /** Built-in tool name this gate shadows (the delegation target). */
+  name: "bash" | "eval";
+  /** Display label of the shadowed tool. */
+  label: string;
+  /** Tool description shown to the model. */
+  description: string;
+  /** Parameter schema (mirrors the native built-in). */
+  schema: (zod: ZodLike) => unknown;
+  /** The judged subject of one call ("" → pass through unjudged). */
+  extractSubject: (params: unknown) => string;
+  /** Working directory in which the subject executes: a per-call `cwd`
+   *  param (bash) or the session cwd (eval). */
+  executionCwd: (params: unknown, sessionCwd: string | undefined) => string | undefined;
+  /** Prompt framing for the judged subject (shell command vs. eval code). */
+  subject: (params: unknown) => SubjectInfo;
+}
+
 /** bash tool parameter schema (mirrors the native built-in). */
-function buildSchema(zod: ZodLike): unknown {
+function buildBashSchema(zod: ZodLike): unknown {
   return zod.object({
     command: zod.string(),
     timeout: zod.number().optional(),
@@ -68,6 +95,62 @@ function buildSchema(zod: ZodLike): unknown {
     async: zod.boolean().optional(),
   });
 }
+
+/** eval tool parameter schema (mirrors the native built-in). */
+function buildEvalSchema(zod: ZodLike): unknown {
+  return zod.object({
+    language: zod.enum(["py", "js"]),
+    code: zod.string(),
+    title: zod.string().optional(),
+    timeout: zod.number().optional(),
+    reset: zod.boolean().optional(),
+  });
+}
+
+/** The bash surface: shell commands run in a shell. */
+export const BASH_TOOL_SPEC: ToolSpec = {
+  name: "bash",
+  label: "Bash",
+  description:
+    "Executes a bash command. Auto Approve judges each command with a " +
+    "risk model: low-risk commands run without review; blocked commands " +
+    "are denied and never executed. In a headless session a denial is " +
+    "final (no confirmation dialog) and explains its reason.",
+  schema: buildBashSchema,
+  extractSubject: (params) => {
+    const p = params as { command?: unknown } | null;
+    return p && typeof p.command === "string" ? p.command : "";
+  },
+  executionCwd: (params, sessionCwd) => {
+    const p = params as { cwd?: unknown } | null;
+    const cwd = p && typeof p.cwd === "string" ? p.cwd : "";
+    return cwd.trim() ? cwd : sessionCwd;
+  },
+  subject: () => ({ kind: "shell" }),
+};
+
+/** The eval surface: Python/JavaScript code executed in the session
+ *  process. */
+export const EVAL_TOOL_SPEC: ToolSpec = {
+  name: "eval",
+  label: "Eval",
+  description:
+    "Executes Python or JavaScript code in the session process. Auto " +
+    "Approve judges each evaluation with a risk model: low-risk code runs " +
+    "without review; blocked code is denied and never executed. In a " +
+    "headless session a denial is final (no confirmation dialog) and " +
+    "explains its reason.",
+  schema: buildEvalSchema,
+  extractSubject: (params) => {
+    const p = params as { code?: unknown } | null;
+    return p && typeof p.code === "string" ? p.code : "";
+  },
+  executionCwd: (_params, sessionCwd) => sessionCwd,
+  subject: (params) => {
+    const p = params as { language?: unknown } | null;
+    return { kind: "eval", language: p?.language === "js" ? "javascript" : "python" };
+  },
+};
 
 /** Localized label for a judge risk rating. */
 function riskLabel(t: I18n, risk: JudgeVerdict["risk"] | undefined): string {
@@ -102,32 +185,32 @@ function blockReasonText(
   return verdict?.risk === "high" ? t.format("reasonHighRisk") : t.format("reasonMediumRisk");
 }
 
-export class BashGate {
-  readonly toolName = "bash";
-  private readonly deps: BashGateDeps;
+export class ToolGate {
+  readonly toolName: string;
+  private readonly deps: ToolGateDeps;
+  private readonly spec: ToolSpec;
 
-  constructor(deps: BashGateDeps) {
+  constructor(deps: ToolGateDeps, spec: ToolSpec) {
     this.deps = deps;
+    this.spec = spec;
+    this.toolName = spec.name;
   }
 
   /** Register this gate as a custom tool shadowing the native built-in. */
   register(pi: ExtensionAPI): void {
+    const { spec } = this;
     pi.registerTool({
-      name: this.toolName,
-      label: "Bash",
-      description:
-        "Executes a bash command. Auto Approve judges each command with a " +
-        "risk model: low-risk commands run without review; blocked commands " +
-        "are denied and never executed. In a headless session a denial is " +
-        "final (no confirmation dialog) and explains its reason.",
-      parameters: buildSchema(pi.zod),
+      name: spec.name,
+      label: spec.label,
+      description: spec.description,
+      parameters: spec.schema(pi.zod),
       approval: "exec",
       execute: (toolCallId, params, signal, onUpdate, ctx) =>
         this.execute(params, signal, onUpdate, ctx),
     });
   }
 
-  /** The decision pipeline for one bash call. */
+  /** The decision pipeline for one call to the shadowed tool. */
   async execute(
     params: unknown,
     signal: AbortSignal | undefined,
@@ -135,48 +218,54 @@ export class BashGate {
     ctx: ExtensionCtx,
   ): Promise<AgentToolResult> {
     const { config, i18n: t, logger, invoker } = this.deps;
+    const spec = this.spec;
+    const log = (message: string) => logger.log(`${spec.name}: ${message}`);
     const cfg: AutoApproveConfig = config.config;
 
-    const command = this.extractSubject(params);
-    if (!command.trim()) {
-      logger.log("bash: empty command, passing through");
+    const subject = spec.extractSubject(params);
+    const subjectInfo = spec.subject(params);
+    if (!subject.trim()) {
+      log("empty subject, passing through");
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
     if (!cfg.enabled) {
-      logger.log("bash: auto-approve disabled, passing through");
+      log("auto-approve disabled, passing through");
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
     if (!ctx.invokeTool) {
-      logger.log("bash: ctx.invokeTool unavailable — cannot delegate");
-      return this.textError("Error: native bash tool delegation unavailable in this host", {
+      log("ctx.invokeTool unavailable — cannot delegate");
+      return this.textError("Error: native tool delegation unavailable in this host", {
         error: "invokeTool-unavailable",
       });
     }
 
     const surfaces = displaySurfaces(cfg);
     if (surfaces.marker || surfaces.notify) {
-      onUpdate?.({ content: [{ type: "text", text: t.format("analyzing") }] });
+      onUpdate?.({
+        content: [{ type: "text", text: t.format(subjectInfo.kind === "eval" ? "analyzingEval" : "analyzing") }],
+      });
     }
 
-    // The prompts must describe where the command executes: a per-call
-    // `cwd` param wins over the session cwd — delegate() runs the native
-    // tool with the original params, so relative paths resolve against
-    // params.cwd, not the session root.
-    const execCwd = this.executionCwd(params, ctx.cwd);
+    // The prompts must describe where the subject executes: a per-call
+    // `cwd` param (bash) wins over the session cwd — delegate() runs the
+    // native tool with the original params, so relative paths resolve
+    // against params.cwd, not the session root. Eval code runs in the
+    // session process, so it always resolves against the session cwd.
+    const execCwd = spec.executionCwd(params, ctx.cwd);
     // Compact conversation excerpts as untrusted background: the models judge
-    // WHY the command runs, not just what it does. "" when there is no
-    // session history or the budget is 0 (command-only judgement).
+    // WHY the subject runs, not just what it does. "" when there is no
+    // session history or the budget is 0 (subject-only judgement).
     const contextSection = this.deps.contextGatherer.section(ctx, cfg.contextMaxChars);
-    // Referenced script files are read so both models judge what the command
+    // Referenced script files are read so both models judge what the subject
     // actually executes; multi-line inline scripts are covered by the rubric.
-    const scriptSection = this.scriptSection(command, execCwd, cfg);
+    const scriptSection = this.scriptSection(subject, execCwd, cfg);
     let outcome: JudgeOutcome;
     try {
       outcome = await invoker.assess(
         JUDGE_MODEL,
-        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd, contextSection, scriptSection),
+        buildJudgePrompt(subject, cfg.subjectMaxChars, execCwd, contextSection, scriptSection, subjectInfo),
         { timeoutMs: cfg.timeoutMs, signal },
       );
     } catch (e) {
@@ -184,34 +273,63 @@ export class BashGate {
       // unexpected throw from escaping the tool handler as an unclassified
       // crash.
       const message = e instanceof Error ? e.message : String(e);
-      logger.log(`bash: judge assess threw (${message})`);
+      log(`judge assess threw (${message})`);
       outcome = { kind: "error", reason: message, category: "protocol" };
     }
 
     // Interrupted while analyzing → abort, no decision.
     if (signal?.aborted) {
-      logger.log("bash: aborted during assessment");
+      log("aborted during assessment");
       return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
     }
     // An explicit abort of the judge request classifies as an abort, not
     // as a judge failure.
     if (outcome.kind === "error" && outcome.category === "abort") {
-      logger.log("bash: assessment aborted by signal");
+      log("assessment aborted by signal");
       return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
+    }
+
+    // A silent judge (no output at all — e.g. the `judge` role resolved to
+    // a native System One / typesafe model that cannot answer a chat prompt)
+    // means the lane, not the command, is broken: fall back to
+    // DEEP_MODELS (@tiny → @smol) re-running the judge's own prompt and JSON
+    // verdict contract, and keep warning that the judge produced no output.
+    let judgeSilent = false;
+    let fallbackModel: string | undefined;
+    if (outcome.kind === "empty" && outcome.reason !== "unparseable verdict") {
+      judgeSilent = true;
+      log(`judge silent (${outcome.reason}); falling back to ${[...DEEP_MODELS].join(", ")}`);
+      const fallback = await runJudgeFallback(
+        invoker,
+        subject,
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
+        logger,
+      );
+      if (signal?.aborted) {
+        log("aborted during judge fallback");
+        return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
+      }
+      if (fallback) {
+        outcome = { kind: "verdict", verdict: fallback.verdict };
+        fallbackModel = fallback.model;
+        log(`fallback verdict from ${fallback.model}`);
+      } else {
+        log("judge fallback produced no usable verdict; failing closed");
+      }
     }
 
     const verdict = outcome.kind === "verdict" ? outcome.verdict : null;
     let decision = decide(verdict, cfg.blockRisk);
-    // The judge only ever sees the first subjectMaxChars of the command. A
-    // command longer than that window may hide a payload past the judged
-    // prefix, so no "allow" verdict can authorize it: over-budget commands
+    // The judge only ever sees the first subjectMaxChars of the subject. A
+    // subject longer than that window may hide a payload past the judged
+    // prefix, so no "allow" verdict can authorize it: over-budget subjects
     // block as "truncated" (or escalate to the user dialog when
     // fallback=ask and a UI is available).
-    if (decision.verdict === "allow" && command.length > cfg.subjectMaxChars) {
+    if (decision.verdict === "allow" && subject.length > cfg.subjectMaxChars) {
       decision = { verdict: "block", reason: "truncated" };
-      logger.log(`bash: command exceeds assessment window (${command.length} > ${cfg.subjectMaxChars}), overriding allow verdict`);
+      log(`subject exceeds assessment window (${subject.length} > ${cfg.subjectMaxChars}), overriding allow verdict`);
     }
-    logger.log(`bash: decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
+    log(`decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
     if (decision.verdict === "allow") {
       const label = riskLabel(t, verdict?.risk);
@@ -224,38 +342,44 @@ export class BashGate {
       if (surfaces.notify) {
         this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
       }
+      if (judgeSilent && ctx.hasUI) {
+        // Kept warning: the verdict came from a fallback model because the
+        // judge produced no output — the operator should fix the judge role.
+        this.notify(ctx, t.format("notifyJudgeSilent", fallbackModel ?? ""), "warning");
+      }
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Only a real first-pass verdict may escalate to the deep pass. When the
-    // judge is unavailable or produced no usable verdict, a deep-model "clear"
-    // must not authorize execution: the deep model is the weakest in the
-    // stack, so a broken primary judge fails closed instead of handing
-    // approval authority to it. (A truncated override still carries a real
-    // verdict, so over-budget commands keep their human dialog.)
+    // Only a first-pass verdict — or a silent-judge fallback verdict — may
+    // escalate to the deep pass. When the judge is unavailable, or silent
+    // with no fallback verdict, a deep-model "clear" must not authorize
+    // execution: the deep model is the weakest in the stack, so a broken
+    // judge lane fails closed instead of handing approval authority to it.
+    // (A truncated override still carries a real verdict, so over-budget
+    // subjects keep their human dialog.)
     const deepEscalation = outcome.kind === "verdict" && cfg.fallback === "ask" && ctx.hasUI;
     if (cfg.fallback === "ask" && ctx.hasUI && outcome.kind !== "verdict") {
-      logger.log(`bash: first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
+      log(`first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
     }
     if (deepEscalation) {
       const { deepInvoker } = this.deps;
       const deep = await runDeepAnalysis(
         deepInvoker,
-        command,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal },
+        subject,
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
         logger,
       );
       if (signal?.aborted) {
-        logger.log("bash: aborted during deep analysis");
+        log("aborted during deep analysis");
         return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
       }
-      const overBudget = command.length > cfg.subjectMaxChars;
+      const overBudget = subject.length > cfg.subjectMaxChars;
       const deepDecision = decide(deep?.verdict ?? null, cfg.blockRisk);
       if (!overBudget && deepDecision.verdict === "allow") {
-        // The deeper analysis re-checked the command and cleared it: no real
+        // The deeper analysis re-checked the subject and cleared it: no real
         // risk at the configured threshold, so approve without a dialog.
         if (signal?.aborted) {
-          logger.log("bash: aborted after deep analysis, not executing");
+          log("aborted after deep analysis, not executing");
           return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
         }
         const label = t.format("riskDeep");
@@ -266,21 +390,21 @@ export class BashGate {
         if (surfaces.notify) {
           this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
         }
-        logger.log(`bash: deep analysis cleared the command, auto-approving (risk=${deep?.verdict?.risk ?? "unknown"})`);
+        log(`deep analysis cleared the subject, auto-approving (risk=${deep?.verdict?.risk ?? "unknown"})`);
         return this.delegate(params, signal, onUpdate, ctx);
       }
       // The deep model flagged a real risk, produced no usable verdict, or the
-      // command is over budget (only a human can review the full command):
+      // subject is over budget (only a human can review the full subject):
       // show the user dialog.
       const detail = deep ? (deep.verdict?.summary || deep.text) : "";
       const body =
         (deep ? detail : t.format("analysisUnavailable")) +
-        `\n\n────────\n${t.format("commandLabel")}: ${command}\n\n${t.format("allowPrompt")}`;
+        `\n\n────────\n${spec.name === "eval" ? t.format("codeLabel") : t.format("commandLabel")}: ${subject}\n\n${t.format("allowPrompt")}`;
       const choice = await this.confirmDialog(ctx, t.format("confirmTitle"), body);
       if (choice === "allow") {
         // Interrupted after approval → do not execute.
         if (signal?.aborted) {
-          logger.log("bash: aborted after user approval, not executing");
+          log("aborted after user approval, not executing");
           return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
         }
         const label = t.format("riskUser");
@@ -291,7 +415,7 @@ export class BashGate {
         if (surfaces.notify) {
           this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
         }
-        logger.log("bash: user approved, delegating to native");
+        log("user approved, delegating to native");
         return this.delegate(params, signal, onUpdate, ctx);
       }
       const denied = t.format("userDenied");
@@ -304,8 +428,15 @@ export class BashGate {
         ...(deep ? { analysis: deep.text, deepModel: deep.model } : {}),
       });
     }
-    const reasonText = blockReasonText(t, decision.reason, verdict, outcome);
-    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, command.length, cfg.subjectMaxChars);
+    // A silent judge keeps its no-output reason on the user-facing
+    // surfaces (the operator must fix the judge lane); the model-facing
+    // denial text below still carries the fallback verdict's reason when
+    // one exists.
+    const reasonText =
+      judgeSilent && decision.reason !== "truncated"
+        ? t.format("reasonJudgeSilent")
+        : blockReasonText(t, decision.reason, verdict, outcome);
+    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, subject.length, cfg.subjectMaxChars);
     if (surfaces.marker) {
       onUpdate?.({ content: [{ type: "text", text: t.format("markerBlocked", reasonText) }] });
     }
@@ -321,7 +452,7 @@ export class BashGate {
       ...(verdict?.summary ? { finding: verdict.summary } : {}),
       ...(outcome.kind === "error" ? { category: outcome.category } : {}),
       ...(decision.reason === "truncated"
-        ? { length: command.length, subjectMaxChars: cfg.subjectMaxChars }
+        ? { length: subject.length, subjectMaxChars: cfg.subjectMaxChars }
         : {}),
     });
   }
@@ -347,12 +478,12 @@ export class BashGate {
       ctx.ui.notify?.(msg, level);
     } catch {
       try {
-        this.deps.logger.log("bash: verdict notification failed");
+        this.deps.logger.log(`${this.spec.name}: verdict notification failed`);
       } catch {}
     }
   }
 
-  /** Model-facing denial prose: explains why the command was not executed.
+  /** Model-facing denial prose: explains why the subject was not executed.
    *  Headless sessions append a note that no dialog was shown, so the
    *  model never mistakes a fail-closed block for a user decision. */
   private denialText(
@@ -361,7 +492,7 @@ export class BashGate {
     verdict: JudgeVerdict | null,
     outcome: JudgeOutcome,
     hasUI: boolean,
-    commandLength?: number,
+    subjectLength?: number,
     subjectMaxChars?: number,
   ): string {
     let text: string;
@@ -374,7 +505,7 @@ export class BashGate {
         verdict?.summary ? `: ${verdict.summary}` : "",
       );
     } else if (decisionReason === "truncated") {
-      text = t.format("deniedTooLong", String(commandLength ?? ""), String(subjectMaxChars ?? ""));
+      text = t.format("deniedTooLong", String(subjectLength ?? ""), String(subjectMaxChars ?? ""));
     } else if (outcome.kind === "empty") {
       // Two distinct failures: the model answered but the text was
       // unparseable (retrying may help), or the model produced no text at
@@ -400,29 +531,13 @@ export class BashGate {
     return hasUI ? text : text + t.format("headlessNote");
   }
 
-  /** The analysis subject: the raw command string. */
-  private extractSubject(params: unknown): string {
-    const p = params as { command?: unknown } | null;
-    return p && typeof p.command === "string" ? p.command : "";
-  }
-
-  /** The working directory in which the command will actually execute: a
-   *  non-empty per-call `cwd` param wins over the session cwd. The judge
-   *  and deep prompts must describe this context, because a relative path
-   *  in the command resolves against it. */
-  private executionCwd(params: unknown, sessionCwd: string | undefined): string | undefined {
-    const p = params as { cwd?: unknown } | null;
-    const cwd = p && typeof p.cwd === "string" ? p.cwd : "";
-    return cwd.trim() ? cwd : sessionCwd;
-  }
-
   /** Build the referenced-script contents section for the prompts.  The
    *  per-file budget comes from config (0 disables file reads); failures
    *  degrade to per-file notes, never to a tool-call crash. */
-  private scriptSection(command: string, cwd: string | undefined, cfg: AutoApproveConfig): string {
-    const contents = collectScriptContents(command, { cwd, maxChars: cfg.scriptMaxChars, logger: this.deps.logger });
+  private scriptSection(subject: string, cwd: string | undefined, cfg: AutoApproveConfig): string {
+    const contents = collectScriptContents(subject, { cwd, maxChars: cfg.scriptMaxChars, logger: this.deps.logger });
     if (contents.length > 0) {
-      this.deps.logger.log(`bash: script analysis: ${contents.length} referenced file(s) sent to the prompts`);
+      this.deps.logger.log(`${this.spec.name}: script analysis: ${contents.length} referenced file(s) sent to the prompts`);
     }
     return formatScriptSection(contents);
   }
@@ -435,9 +550,9 @@ export class BashGate {
     ctx: ExtensionCtx,
   ): Promise<AgentToolResult> {
     if (!ctx.invokeTool) {
-      this.deps.logger.log("bash: ctx.invokeTool unavailable — cannot delegate");
+      this.deps.logger.log(`${this.spec.name}: ctx.invokeTool unavailable — cannot delegate`);
       return Promise.resolve(
-        this.textError("Error: native bash tool delegation unavailable in this host", {
+        this.textError("Error: native tool delegation unavailable in this host", {
           error: "invokeTool-unavailable",
         }),
       );
@@ -447,5 +562,20 @@ export class BashGate {
 
   private textError(text: string, details: Record<string, unknown>): AgentToolResult {
     return { content: [{ type: "text", text }], details, isError: true };
+  }
+}
+
+/** The bash surface: shadows the native `bash` built-in. */
+export class BashGate extends ToolGate {
+  constructor(deps: ToolGateDeps) {
+    super(deps, BASH_TOOL_SPEC);
+  }
+}
+
+/** The eval surface: shadows the native `eval` built-in (Python/JavaScript
+ *  executed in the session process). */
+export class EvalGate extends ToolGate {
+  constructor(deps: ToolGateDeps) {
+    super(deps, EVAL_TOOL_SPEC);
   }
 }

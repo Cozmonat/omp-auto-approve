@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fakeChildFactory, FakeRpcChild } from "../test/fakes/rpc-child";
 import { ConfigStore } from "./config";
-import { BashGate } from "./gate";
+import { BashGate, EvalGate, type ToolGate, type ToolGateDeps } from "./gate";
 import { createI18n } from "./i18n";
 import { JudgeInvoker } from "./judge";
 import { SessionContextGatherer } from "./context";
@@ -90,7 +90,7 @@ function makeCtx(
 }
 
 interface Rig {
-  gate: BashGate;
+  gate: ToolGate;
   store: ConfigStore;
   children: FakeRpcChild[];
   deepChildren: FakeRpcChild[];
@@ -102,6 +102,7 @@ function makeRig(
   children: FakeRpcChild[],
   configPatch: Record<string, unknown> = {},
   deepFactory?: (model: string) => FakeRpcChild,
+  Gate: new (deps: ToolGateDeps) => ToolGate = BashGate,
 ): Rig {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "auto-approve-gate-"));
   const agentDir = path.join(tmp, "agent");
@@ -126,7 +127,7 @@ function makeRig(
     invokerOptions,
     effectiveDeepFactory,
   );
-  const gate = new BashGate({ config: store, contextGatherer: new SessionContextGatherer(quietLogger), i18n: t, logger: quietLogger, invoker, deepInvoker });
+  const gate = new Gate({ config: store, contextGatherer: new SessionContextGatherer(quietLogger), i18n: t, logger: quietLogger, invoker, deepInvoker });
   return {
     gate,
     store,
@@ -901,13 +902,16 @@ describe("BashGate over-budget commands", () => {
     // The judge produced no assistant text at all (e.g. a native System One
     // / typesafe judge lane that cannot answer a chat prompt). Distinct
     // from an unparseable response: retrying does not help, the
-    // configuration does — the denial must say so.
+    // configuration does — the denial must say so. The @tiny → @smol
+    // fallback is attempted and, answering with unparseable text here,
+    // yields no verdict either: the command still fails closed.
     const { factory, children } = fakeChildFactory([{ replyText: null }], {});
     const rig = makeRig(factory, children);
     const { ctx, calls, notifications } = makeCtx();
     const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
+    expect(children).toHaveLength(3); // judge + @tiny + @smol fallback attempts
     const text = result.content[0].text;
     expect(text).toContain("produced no output at all");
     expect(text).toContain("empty completion");
@@ -939,5 +943,237 @@ describe("BashGate over-budget commands", () => {
     expect(result.isError ?? false).toBe(false);
     expect(calls).toHaveLength(1);
     await rig.dispose();
+  });
+});
+
+describe("BashGate silent-judge fallback", () => {
+  test("a silent judge falls back to @tiny, whose verdict approves the command", async () => {
+    // @judge returns no output (e.g. a native typesafe judge lane); @tiny
+    // answers the judge's own prompt with a parseable low-risk verdict.
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { replyText: lowVerdict }],
+      { replyText: lowVerdict },
+    );
+    const rig = makeRig(factory, children);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(children).toHaveLength(2); // judge + @tiny; @smol never needed
+    // The kept warning: the judge lane is broken even though the command ran.
+    expect(
+      notifications.some((n) => n.level === "warning" && n.msg.includes("verdict from @tiny")),
+    ).toBe(true);
+    expect(notifications.some((n) => n.level === "info" && n.msg.includes("Auto-approved"))).toBe(true);
+    await rig.dispose();
+  });
+
+  test("a silent @tiny is retried on @smol", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { replyText: null }, { replyText: lowVerdict }],
+      { replyText: lowVerdict },
+    );
+    const rig = makeRig(factory, children);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(children).toHaveLength(3); // judge + @tiny + @smol
+    await rig.dispose();
+  });
+
+  test("a silent judge whose fallback models produce no usable verdict keeps the no-output block", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { dead: true }, { dead: true }],
+      { dead: true },
+    );
+    const rig = makeRig(factory, children);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    const text = result.content[0].text;
+    expect(text).toContain("produced no output at all");
+    expect(text).toContain("empty completion");
+    expect(
+      notifications.some((n) => n.level === "warning" && n.msg.includes("judge produced no output")),
+    ).toBe(true);
+    await rig.dispose();
+  });
+
+  test("a silent-judge fallback verdict can still block, keeping the no-output warning", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { replyText: highVerdict }],
+      { replyText: highVerdict },
+    );
+    const rig = makeRig(factory, children);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    // The kept notification names the broken lane, not the fallback rating.
+    expect(
+      notifications.some((n) => n.level === "warning" && n.msg.includes("judge produced no output")),
+    ).toBe(true);
+    // The model-facing denial still carries the fallback verdict's reason.
+    expect(result.content[0].text).toContain("declined");
+    await rig.dispose();
+  });
+});
+
+describe("EvalGate", () => {
+  test("disabled gate delegates without consulting the judge", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, { enabled: false }, undefined, EvalGate);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ language: "py", code: "print(1)" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(children).toHaveLength(0); // judge never spawned
+    await rig.dispose();
+  });
+
+  test("low-risk eval code auto-approves: delegates the original params to the native eval", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, {}, undefined, EvalGate);
+    const updates: string[] = [];
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute(
+      { language: "js", code: "console.log(1)" },
+      undefined,
+      (u: Update) => pushUpdates(updates, u),
+      ctx,
+    );
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.params).toEqual({ language: "js", code: "console.log(1)" });
+    expect(children).toHaveLength(1);
+    expect(updates.some((line) => line.includes("approved"))).toBe(true);
+    expect(notifications.some((n) => n.level === "info" && n.msg.includes("Auto-approved"))).toBe(true);
+    await rig.dispose();
+  });
+
+  test("high-risk eval code blocks: never delegates, always toasts", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
+    const rig = makeRig(factory, children, { display: "off" }, undefined, EvalGate);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute(
+      { language: "py", code: "import os; os.system('rm -rf /')" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(notifications.some((n) => n.level === "warning")).toBe(true);
+    await rig.dispose();
+  });
+
+  test("judge failure fails closed for eval too", async () => {
+    const { factory, children } = fakeChildFactory([{ dead: true }], { dead: true });
+    const rig = makeRig(factory, children, {}, undefined, EvalGate);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ language: "py", code: "print(1)" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    await rig.dispose();
+  });
+
+  test("a silent judge falls back to @tiny for eval code too, keeping the warning", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { replyText: lowVerdict }],
+      { replyText: lowVerdict },
+    );
+    const rig = makeRig(factory, children, {}, undefined, EvalGate);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ language: "js", code: "console.log(2)" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(children).toHaveLength(2);
+    expect(
+      notifications.some((n) => n.level === "warning" && n.msg.includes("verdict from @tiny")),
+    ).toBe(true);
+    await rig.dispose();
+  });
+
+  test("empty code passes through without judging", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, {}, undefined, EvalGate);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ language: "py", code: "   " }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(children).toHaveLength(0);
+    await rig.dispose();
+  });
+
+  test("eval prompts frame the subject as code with its language", async () => {
+    const prompts: string[] = [];
+    const capturing = (replyText: string) =>
+      new FakeRpcChild({
+        replyText,
+        onFrame: (f) => {
+          if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+        },
+      });
+    const judge = capturing(highVerdict); // flagged -> forces the deep pass
+    const deep = capturing('{"risk":"low","recommend":"allow","summary":"read-only"}');
+    const rig = makeRig(() => judge, [judge], { fallback: "ask" }, () => deep, EvalGate);
+    const { ctx, calls } = makeCtx({ cwd: "/session/repo" });
+    const result = await rig.gate.execute(
+      { language: "py", code: "print(open('x').read())" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(result.content[0].text).toBe("delegated"); // deep model cleared it
+    expect(calls).toHaveLength(1);
+    expect(prompts).toHaveLength(2); // judge and deep both prompted
+    expect(prompts[0]).toContain("Code to judge:");
+    expect(prompts[0]).toContain("Language: python");
+    expect(prompts[0]).toContain("Working directory: /session/repo");
+    expect(prompts[1]).toContain("Code to analyze:");
+    expect(prompts[1]).toContain("Language: python");
+    await rig.dispose();
+  });
+
+  test("bash prompts keep the shell framing", async () => {
+    const prompts: string[] = [];
+    const capturing = (replyText: string) =>
+      new FakeRpcChild({
+        replyText,
+        onFrame: (f) => {
+          if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+        },
+      });
+    const judge = capturing(lowVerdict);
+    const rig = makeRig(() => judge, [judge], {}, undefined, BashGate);
+    const { ctx } = makeCtx({ cwd: "/session/repo" });
+    await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Command to judge:");
+    expect(prompts[0]).not.toContain("Language:");
+    await rig.dispose();
+  });
+
+  test("register() exposes an eval tool shadowing the native built-in", () => {
+    const { factory, children } = fakeChildFactory([{}], {});
+    const rig = makeRig(factory, children, {}, undefined, EvalGate);
+    const registered: Array<{ name: string; approval?: string }> = [];
+    const field = { describe: () => field, optional: () => field };
+    const pi = {
+      registerTool: (def: { name: string; approval?: string }) =>
+        registered.push({ name: def.name, approval: def.approval }),
+      zod: {
+        object: (spec: unknown) => spec,
+        string: () => field,
+        number: () => field,
+        boolean: () => field,
+        enum: (values: readonly string[]) => values,
+      },
+    } as unknown as ExtensionAPI;
+    rig.gate.register(pi);
+    expect(registered).toEqual([{ name: "eval", approval: "exec" }]);
+    void rig.dispose();
   });
 });

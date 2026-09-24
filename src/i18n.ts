@@ -42,6 +42,8 @@ interface Dictionary {
   deniedUserDenied: string;
   headlessNote: string;
   analyzing: string;
+  analyzingEval: string;
+  notifyJudgeSilent: string;
   cmdOnDescription: string;
   cmdOffDescription: string;
   cmdStatusDescription: string;
@@ -62,6 +64,7 @@ interface Dictionary {
   confirmTitle: string;
   allowPrompt: string;
   commandLabel: string;
+  codeLabel: string;
   analysisUnavailable: string;
   userDenied: string;
   riskUser: string;
@@ -70,7 +73,7 @@ interface Dictionary {
 
 const EN: Dictionary = {
   help: [
-    "auto-approve — judge-model auto-approval for bash",
+    "auto-approve — judge-model auto-approval for bash and eval",
     "",
     "usage: /auto-approve [on|off|status|display <off|marker|both>|risk <medium|high>|fallback <ask|block>]",
     "",
@@ -85,13 +88,14 @@ const EN: Dictionary = {
   ].join("\n"),
   cmdDescription: "Auto-approve low-risk operations with a judge model",
   statusEnabled: "auto-approve: ON (display {0}, blocks risk {1} and above, fallback {2})",
-  statusDisabled: "auto-approve: OFF (bash passes through natively)",
+  statusDisabled: "auto-approve: OFF (bash/eval pass through natively)",
   switchEnabled: "auto-approve enabled.",
   switchDisabled: "auto-approve disabled.",
   switchDisplay: "display set to {0}.",
   switchRisk: "block risk set to {0}.",
   notifyApproved: "✅ Auto-approved — {0}{1}",
   notifyBlocked: "❌ Auto-approve blocked: {0}",
+  notifyJudgeSilent: "⚠️ Judge produced no output (verdict from {0})",
   markerApproved: "auto-approve: approved — {0}{1}",
   markerBlocked: "auto-approve: blocked ({0})",
   reasonFallback: "judge unavailable",
@@ -114,6 +118,7 @@ const EN: Dictionary = {
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
   analyzing: "👀 Reviewing command with judge model…",
+  analyzingEval: "👀 Reviewing code with judge model…",
   cmdOnDescription: "enable auto-approve",
   cmdOffDescription: "disable auto-approve",
   cmdStatusDescription: "show current settings",
@@ -134,6 +139,7 @@ const EN: Dictionary = {
   confirmTitle: "⚠️ Dangerous command review",
   allowPrompt: "Allow execution?",
   commandLabel: "Command",
+  codeLabel: "Code",
   analysisUnavailable: "risk analysis unavailable",
   userDenied: "user denied",
   riskUser: "user",
@@ -142,7 +148,7 @@ const EN: Dictionary = {
 
 const ZH: Dictionary = {
   help: [
-    "auto-approve — 使用裁判模型自动审批 bash 命令",
+    "auto-approve — 使用裁判模型自动审批 bash 命令与 eval 代码",
     "",
     "用法: /auto-approve [on|off|status|display <off|marker|both>|risk <medium|high>|fallback <ask|block>]",
     "",
@@ -157,13 +163,14 @@ const ZH: Dictionary = {
   ].join("\n"),
   cmdDescription: "使用裁判模型自动批准低风险操作",
   statusEnabled: "auto-approve: 已启用(展示 {0},拦截风险 {1} 及以上,fallback {2})",
-  statusDisabled: "auto-approve: 已停用(bash 原生通过)",
+  statusDisabled: "auto-approve: 已停用(bash/eval 原生通过)",
   switchEnabled: "已启用 auto-approve。",
   switchDisabled: "已停用 auto-approve。",
   switchDisplay: "展示方式已设为 {0}。",
   switchRisk: "拦截风险等级已设为 {0}。",
   notifyApproved: "✅ 自动批准 — {0}{1}",
   notifyBlocked: "❌ auto-approve 已拦截: {0}",
+  notifyJudgeSilent: "⚠️ 裁判未产生任何输出(判定来自 {0})",
   markerApproved: "auto-approve: 已批准 — {0}{1}",
   markerBlocked: "auto-approve: 已拦截({0})",
   reasonFallback: "裁判不可用",
@@ -186,6 +193,7 @@ const ZH: Dictionary = {
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",
   analyzing: "👀 正在使用裁判模型审查命令…",
+  analyzingEval: "👀 正在使用裁判模型审查代码…",
   cmdOnDescription: "启用 auto-approve",
   cmdOffDescription: "停用 auto-approve",
   cmdStatusDescription: "显示当前配置",
@@ -206,6 +214,7 @@ const ZH: Dictionary = {
   confirmTitle: "⚠️ 危险命令确认",
   allowPrompt: "是否允许执行？",
   commandLabel: "命令",
+  codeLabel: "代码",
   analysisUnavailable: "风险评估不可用",
   userDenied: "用户拒绝",
   riskUser: "用户",

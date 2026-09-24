@@ -169,7 +169,7 @@ describe("/auto-approve handler", () => {
     modeManager.setEnabled(false);
     ({ ctx, messages } = makeCommandCtx());
     await runCommand(modeManager, cmd.handler, "status", ctx);
-    expect(messages).toEqual(["auto-approve: OFF (bash passes through natively)"]);
+    expect(messages).toEqual(["auto-approve: OFF (bash/eval pass through natively)"]);
   });
 
   test("display <mode> validates, switches, and persists", async () => {
@@ -351,7 +351,7 @@ function makeZodStub() {
 }
 
 describe("AutoApprove factory", () => {
-  test("register() exposes the bash shadow, the command, and the shutdown hook", async () => {
+  test("register() exposes the bash and eval shadows, the command, and the shutdown hook", async () => {
     const configDir = tmpDir();
     const tools: Array<{ name: string; approval?: string; description: string }> = [];
     const commands: Array<{ name: string; description: string; hasCompletions: boolean }> = [];
@@ -386,7 +386,7 @@ describe("AutoApprove factory", () => {
     });
     plugin.register();
 
-    expect(tools.map((x) => x.name)).toEqual(["bash"]);
+    expect(tools.map((x) => x.name)).toEqual(["bash", "eval"]);
     expect(tools[0]?.approval).toBe("exec");
     expect(commands).toEqual([
       { name: "auto-approve", description: "Auto-approve low-risk operations with a judge model", hasCompletions: true },

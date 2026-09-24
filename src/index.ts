@@ -2,11 +2,10 @@
  * Auto Approve — extension entry point.
  *
  * Orchestrator: wires the collaborators (config store, host resolver,
- * judge invoker, gate, mode manager) and registers:
+ * judge invokers, gates, mode manager) and registers:
  *
- *   - BashGate — custom "bash" tool (shadows the built-in, delegates via
- *     ctx.invokeTool when the judge allows)
- *   - /auto-approve slash command (runtime enabled/display/risk switching)
+ *   - BashGate + EvalGate — custom "bash" / "eval" tools (shadow the
+ *     built-ins, delegate via ctx.invokeTool when the judge allows)
  *
  * The custom-tool execute() path is not subject to the 30s extension
  * handler budget, so judge analysis has no wall-clock pressure.
@@ -21,7 +20,7 @@ import { ConfigStore } from "./config";
 import { HostResolver, type HostLaunchSpec } from "./host";
 import { JudgeInvoker, makeDeepChildFactory } from "./judge";
 import { ModeManager, DISPLAY_VALUES, BLOCK_RISK_VALUES, FALLBACK_VALUES } from "./mode-manager";
-import { BashGate } from "./gate";
+import { BashGate, EvalGate, type ToolGate } from "./gate";
 import { SessionContextGatherer } from "./context";
 
 /** Test seams for the extension factory. */
@@ -186,10 +185,11 @@ export function registerAutoApproveCommand(
  * Auto Approve extension orchestrator.
  *
  * Thin by design: each concern lives in its own module; this class only
- * constructs the collaborators and registers the shadowed bash tool, the
- * slash command, and the session-shutdown hook.  It ALWAYS registers — the
- * enabled flag gates behavior per call, so `/auto-approve` can toggle it
- * at runtime in a host that loaded the plugin with enabled=false.
+ * constructs the collaborators and registers the shadowed bash and eval
+ * tools, the slash command, and the session-shutdown hook.  It ALWAYS
+ * registers — the enabled flag gates behavior per call, so
+ * `/auto-approve` can toggle it at runtime in a host that loaded the
+ * plugin with enabled=false.
  */
 export class AutoApprove {
   readonly configStore: ConfigStore;
@@ -199,7 +199,7 @@ export class AutoApprove {
   readonly contextGatherer: SessionContextGatherer;
   private readonly logger: LoggerLike;
   private readonly t: I18n;
-  private readonly gate: BashGate;
+  private readonly gates: ToolGate[];
   private disposed = false;
 
   constructor(
@@ -229,19 +229,20 @@ export class AutoApprove {
       invokerOptions,
       options.deepChildFactory ?? makeDeepChildFactory(launch),
     );
-    this.gate = new BashGate({
+    const gateDeps = {
       config: this.configStore,
       contextGatherer: this.contextGatherer,
       i18n: this.t,
       logger: this.logger,
       invoker: this.invoker,
       deepInvoker: this.deepInvoker,
-    });
+    };
+    this.gates = [new BashGate(gateDeps), new EvalGate(gateDeps)];
   }
 
-  /** Register the shadowed bash tool, slash command, and shutdown hook. */
+  /** Register the shadowed bash and eval tools, slash command, and shutdown hook. */
   register(): void {
-    this.gate.register(this.pi);
+    for (const gate of this.gates) gate.register(this.pi);
     registerAutoApproveCommand(this.pi, this.modeManager, this.t);
     this.pi.on("session_shutdown", async () => {
       if (this.disposed) return;

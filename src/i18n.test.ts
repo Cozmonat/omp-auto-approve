@@ -18,16 +18,16 @@ function keySet(lang: I18nLang): Set<string> {
  *  dictionary (caught here at test time, not only by tsc) makes
  *  format() pass the raw key through as user-facing text. */
 const EXPECTED_KEYS = [
-  "allowPrompt", "analysisUnavailable", "analyzing", "blocked",
+  "allowPrompt", "analysisUnavailable", "analyzing", "analyzingEval", "blocked",
   "cmdDescription", "cmdDisplayBothDescription", "cmdDisplayDescription",
   "cmdDisplayMarkerDescription", "cmdDisplayOffDescription",
   "cmdFallbackAskDescription", "cmdFallbackBlockDescription", "cmdFallbackDescription",
   "cmdOffDescription", "cmdOnDescription", "cmdRiskDescription",
   "cmdRiskHighDescription", "cmdRiskMediumDescription", "cmdStatusDescription",
-  "commandLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
+  "commandLabel", "codeLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
   "deniedJudgeSilent", "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
   "displayStatus", "fallbackStatus", "fallbackSwitched", "headlessNote", "help",
-  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked",
+  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked", "notifyJudgeSilent",
   "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonJudgeSilent", "reasonMediumRisk", "reasonNoVerdict",
   "reasonTruncated",
   "riskDeep", "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
