@@ -14,6 +14,7 @@ import { ConfigStore } from "./config";
 import { BashGate, EvalGate, type ToolGate, type ToolGateDeps } from "./gate";
 import { createI18n } from "./i18n";
 import { JudgeInvoker } from "./judge";
+import type { NativeJudge, NativeJudgmentRequest, NativeJudgmentResult, NativeLane } from "./native-judge";
 import { SessionContextGatherer } from "./context";
 import type { AgentToolResult, ExtensionAPI, ExtensionCtx, LoggerLike } from "./types";
 
@@ -97,12 +98,16 @@ interface Rig {
   dispose: () => Promise<void>;
 }
 
+/** No native lane: stage 1 runs on the RPC chat judge. */
+const chatOnly: NativeJudge = { resolve: async () => undefined };
+
 function makeRig(
   factory: (model: string) => FakeRpcChild,
   children: FakeRpcChild[],
   configPatch: Record<string, unknown> = {},
   deepFactory?: (model: string) => FakeRpcChild,
   Gate: new (deps: ToolGateDeps) => ToolGate = BashGate,
+  nativeJudge: NativeJudge = chatOnly,
 ): Rig {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "auto-approve-gate-"));
   const agentDir = path.join(tmp, "agent");
@@ -127,7 +132,15 @@ function makeRig(
     invokerOptions,
     effectiveDeepFactory,
   );
-  const gate = new Gate({ config: store, contextGatherer: new SessionContextGatherer(quietLogger), i18n: t, logger: quietLogger, invoker, deepInvoker });
+  const gate = new Gate({
+    config: store,
+    contextGatherer: new SessionContextGatherer(quietLogger),
+    i18n: t,
+    logger: quietLogger,
+    invoker,
+    deepInvoker,
+    nativeJudge,
+  });
   return {
     gate,
     store,
@@ -960,11 +973,25 @@ describe("BashGate silent-judge fallback", () => {
     expect(result.content[0].text).toBe("delegated");
     expect(calls).toHaveLength(1);
     expect(children).toHaveLength(2); // judge + @tiny; @smol never needed
-    // The kept warning: the judge lane is broken even though the command ran.
-    expect(
-      notifications.some((n) => n.level === "warning" && n.msg.includes("verdict from @tiny")),
-    ).toBe(true);
-    expect(notifications.some((n) => n.level === "info" && n.msg.includes("Auto-approved"))).toBe(true);
+    // The kept lane note rides on the approval toast as an info line: the
+    // host prefixes warning-level toasts with "Warning:", and consecutive
+    // info toasts collapse into one status line.
+    expect(notifications).toEqual([
+      { msg: "✅ Auto-approved — low risk\n⚠️ Judge produced no output (verdict from @tiny)", level: "info" },
+    ]);
+    await rig.dispose();
+  });
+
+  test("with approval toasts off, the lane note is still shown on its own at info level", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ replyText: null }, { replyText: lowVerdict }],
+      { replyText: lowVerdict },
+    );
+    const rig = makeRig(factory, children, { display: "marker" });
+    const { ctx, calls, notifications } = makeCtx();
+    await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(1);
+    expect(notifications).toEqual([{ msg: "⚠️ Judge produced no output (verdict from @tiny)", level: "info" }]);
     await rig.dispose();
   });
 
@@ -1017,6 +1044,186 @@ describe("BashGate silent-judge fallback", () => {
     ).toBe(true);
     // The model-facing denial still carries the fallback verdict's reason.
     expect(result.content[0].text).toContain("declined");
+    await rig.dispose();
+  });
+});
+
+describe("native judge tier", () => {
+  function nativeResult(choice: string): NativeJudgmentResult {
+    return {
+      provider: "remote-judge-typesafe",
+      model: "decider-v10",
+      answers: { risk: { type: "choice", choice, probabilities: { low: 0.8, medium: 0.15, high: 0.05 }, confidence: 0.8 } },
+    };
+  }
+
+  /** A native judge whose lane runs `judge`, recording each request. */
+  function nativeJudge(judge: NativeLane["judge"]): { native: NativeJudge; requests: NativeJudgmentRequest[] } {
+    const requests: NativeJudgmentRequest[] = [];
+    return {
+      requests,
+      native: {
+        resolve: async () => ({
+          judge: (request, signal) => {
+            requests.push(request);
+            return judge(request, signal);
+          },
+        }),
+      },
+    };
+  }
+
+  /** RPC child factory recording which model role each child was spawned for. */
+  function recordingFactory(opts: ConstructorParameters<typeof FakeRpcChild>[0]): {
+    factory: (model: string) => FakeRpcChild;
+    models: string[];
+    children: FakeRpcChild[];
+  } {
+    const models: string[] = [];
+    const children: FakeRpcChild[] = [];
+    return {
+      models,
+      children,
+      factory: (model: string) => {
+        models.push(model);
+        const child = new FakeRpcChild(opts);
+        children.push(child);
+        return child;
+      },
+    };
+  }
+
+  const failing: NativeLane["judge"] = async () => {
+    throw new Error("judgment: every judge candidate failed: HTTP 503");
+  };
+
+  test("a native low-risk verdict approves without spawning the chat judge", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    const { native } = nativeJudge(async () => nativeResult("low"));
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(rpc.models).toEqual([]);
+    expect(notifications.some((n) => n.level === "info" && n.msg.includes("Auto-approved — low risk"))).toBe(true);
+    expect(notifications.some((n) => n.level === "warning")).toBe(false);
+    await rig.dispose();
+  });
+
+  test("a native high-risk verdict blocks without consulting any chat model", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    const { native } = nativeJudge(async () => nativeResult("high"));
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "rm -rf ~/" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(result.content[0].text).toContain("rated this command high risk");
+    expect(rpc.models).toEqual([]);
+    await rig.dispose();
+  });
+
+  test("a failing native judge falls back to @tiny, whose verdict approves with a native-failure warning", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    const { native } = nativeJudge(failing);
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    // The chat @judge is skipped: it would resolve to the same native model.
+    expect(rpc.models).toEqual(["@tiny"]);
+    expect(notifications).toEqual([
+      { msg: "✅ Auto-approved — low risk\n⚠️ Native judge failed (verdict from @tiny)", level: "info" },
+    ]);
+    await rig.dispose();
+  });
+
+  test("a failing native judge with a silent @tiny is retried on @smol", async () => {
+    const models: string[] = [];
+    const children: FakeRpcChild[] = [];
+    const factory = (model: string) => {
+      models.push(model);
+      const child = new FakeRpcChild(model === "@smol" ? { replyText: lowVerdict } : { dead: true });
+      children.push(child);
+      return child;
+    };
+    const { native } = nativeJudge(failing);
+    const rig = makeRig(factory, children, {}, undefined, BashGate, native);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(models).toEqual(["@tiny", "@smol"]);
+    await rig.dispose();
+  });
+
+  test("a failing native judge with no fallback verdict blocks, naming the provider failure", async () => {
+    const rpc = recordingFactory({ dead: true });
+    const { native } = nativeJudge(failing);
+    const rig = makeRig(rpc.factory, rpc.children, { display: "off" }, undefined, BashGate, native);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(result.content[0].text).toContain("provider: judgment: every judge candidate failed: HTTP 503");
+    expect(result.details).toMatchObject({ blocked: true, reason: "fallback", category: "provider" });
+    expect(notifications.some((n) => n.level === "warning" && n.msg.includes("native judge failed"))).toBe(true);
+    await rig.dispose();
+  });
+
+  test("an abort during the native judgment settles as aborted, with no fallback", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    // The operator interrupts while the native judgment is in flight.
+    const controller = new AbortController();
+    const { native } = nativeJudge((_request, signal) => {
+      const { promise, reject } = Promise.withResolvers<NativeJudgmentResult>();
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      controller.abort();
+      return promise;
+    });
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, controller.signal, undefined, ctx);
+    expect(result.content[0].text).toBe("(aborted)");
+    expect(calls).toHaveLength(0);
+    expect(rpc.models).toEqual([]);
+    await rig.dispose();
+  });
+
+  test("a native allow cannot approve a subject longer than the assessment window", async () => {
+    const rpc = recordingFactory({ dead: true });
+    const { native } = nativeJudge(async () => nativeResult("low"));
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    rig.store.config.subjectMaxChars = 50;
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: `echo ${"x".repeat(100)}` }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(result.details).toMatchObject({ reason: "truncated" });
+    await rig.dispose();
+  });
+
+  test("the native judgment describes the execution cwd of a bash call", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    const { native, requests } = nativeJudge(async () => nativeResult("low"));
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
+    const { ctx } = makeCtx({ cwd: "/session/root" });
+    await rig.gate.execute({ command: "ls", cwd: "/work/sub" }, undefined, undefined, ctx);
+    expect(requests.map((r) => r.state)).toEqual([{ command: "ls", cwd: "/work/sub" }]);
+    await rig.dispose();
+  });
+
+  test("eval code reaches the native judge framed as code with its language", async () => {
+    const rpc = recordingFactory({ replyText: lowVerdict });
+    const { native, requests } = nativeJudge(async () => nativeResult("low"));
+    const rig = makeRig(rpc.factory, rpc.children, {}, undefined, EvalGate, native);
+    const { ctx, calls } = makeCtx({ cwd: "/session/root" });
+    await rig.gate.execute({ language: "python", code: "print(1)" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(1);
+    expect(requests[0]?.state).toMatchObject({ code: "print(1)", cwd: "/session/root" });
+    expect(requests[0]?.state.language).toBeDefined();
     await rig.dispose();
   });
 });
@@ -1090,9 +1297,9 @@ describe("EvalGate", () => {
     expect(result.content[0].text).toBe("delegated");
     expect(calls).toHaveLength(1);
     expect(children).toHaveLength(2);
-    expect(
-      notifications.some((n) => n.level === "warning" && n.msg.includes("verdict from @tiny")),
-    ).toBe(true);
+    expect(notifications).toEqual([
+      { msg: "✅ Auto-approved — low risk\n⚠️ Judge produced no output (verdict from @tiny)", level: "info" },
+    ]);
     await rig.dispose();
   });
 

@@ -2,11 +2,13 @@
  * Auto Approve — tool gate.
  *
  * ToolGate shadows a native built-in tool (bash, eval) via registerTool.
- * Two-stage decision: a first-pass risk verdict from the judge model through
- * the persistent RPC child (judge.ts), then pure policy (policy.ts).  A
- * judge that produces no output at all (a broken judge lane, e.g. a native
- * System One / typesafe `judge` role) falls back to the @tiny → @smol chain
- * re-running the judge's own prompt, keeping the no-output warning.  Below
+ * Two-stage decision: a first-pass risk verdict, then pure policy
+ * (policy.ts).  Stage 1 runs natively (native-judge.ts: one typed `risk`
+ * judgment through the host's judge-role chain) when the host `judge` role
+ * resolves to a System One backend, else on the judge model through the
+ * persistent RPC child (judge.ts).  A failed native judgment, or a chat
+ * judge that produces no output at all, falls back to the @tiny → @smol
+ * chain re-running the judge's chat prompt, keeping a lane warning.  Below
  * the threshold the call delegates to the native tool via ctx.invokeTool
  * (inheriting shell path resolution, env hardening, PTY and output
  * truncation for bash; in-process execution for eval).  Above the
@@ -31,6 +33,7 @@ import {
   type JudgeInvoker,
   type SubjectInfo,
 } from "./judge";
+import { assessNative, buildNativeJudgment, type NativeJudge } from "./native-judge";
 import { SessionContextGatherer } from "./context";
 import { collectScriptContents, formatScriptSection } from "./scripts";
 import { displaySurfaces } from "./config";
@@ -59,6 +62,9 @@ export interface ToolGateDeps {
   invoker: JudgeInvoker;
   /** Persistent deep-analysis child driver (verdict pass, tiny→smol). */
   deepInvoker: JudgeInvoker;
+  /** Native System One stage-1 lane (resolved per call; no lane = the RPC
+   *  chat judge decides). */
+  nativeJudge: NativeJudge;
 }
 
 /** Tool update callback, matching ToolDefinition.execute's onUpdate. */
@@ -261,20 +267,38 @@ export class ToolGate {
     // Referenced script files are read so both models judge what the subject
     // actually executes; multi-line inline scripts are covered by the rubric.
     const scriptSection = this.scriptSection(subject, execCwd, cfg);
+    // Stage 1 runs natively when the host's `judge` role resolves to a
+    // System One judgment backend; otherwise on the RPC chat judge.
+    const lane = await this.deps.nativeJudge.resolve(ctx);
     let outcome: JudgeOutcome;
-    try {
-      outcome = await invoker.assess(
-        JUDGE_MODEL,
-        buildJudgePrompt(subject, cfg.subjectMaxChars, execCwd, contextSection, scriptSection, subjectInfo),
+    if (lane) {
+      outcome = await assessNative(
+        lane,
+        buildNativeJudgment(subject, {
+          subjectMaxChars: cfg.subjectMaxChars,
+          cwd: execCwd,
+          context: contextSection,
+          script: scriptSection,
+          subject: subjectInfo,
+        }),
         { timeoutMs: cfg.timeoutMs, signal },
+        logger,
       );
-    } catch (e) {
-      // assess() classifies all known failure paths; this guard keeps an
-      // unexpected throw from escaping the tool handler as an unclassified
-      // crash.
-      const message = e instanceof Error ? e.message : String(e);
-      log(`judge assess threw (${message})`);
-      outcome = { kind: "error", reason: message, category: "protocol" };
+    } else {
+      try {
+        outcome = await invoker.assess(
+          JUDGE_MODEL,
+          buildJudgePrompt(subject, cfg.subjectMaxChars, execCwd, contextSection, scriptSection, subjectInfo),
+          { timeoutMs: cfg.timeoutMs, signal },
+        );
+      } catch (e) {
+        // assess() classifies all known failure paths; this guard keeps an
+        // unexpected throw from escaping the tool handler as an unclassified
+        // crash.
+        const message = e instanceof Error ? e.message : String(e);
+        log(`judge assess threw (${message})`);
+        outcome = { kind: "error", reason: message, category: "protocol" };
+      }
     }
 
     // Interrupted while analyzing → abort, no decision.
@@ -289,16 +313,24 @@ export class ToolGate {
       return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
     }
 
-    // A silent judge (no output at all — e.g. the `judge` role resolved to
-    // a native System One / typesafe model that cannot answer a chat prompt)
-    // means the lane, not the command, is broken: fall back to
-    // DEEP_MODELS (@tiny → @smol) re-running the judge's own prompt and JSON
-    // verdict contract, and keep warning that the judge produced no output.
-    let judgeSilent = false;
+    // A broken stage-1 lane (not the command) falls back to DEEP_MODELS
+    // (@tiny → @smol) re-running the judge's chat prompt and JSON verdict
+    // contract, and keeps warning that the lane failed:
+    //  - "native": the native judgment failed (provider error, timeout, no
+    //    usable answer).  The chat @judge is skipped — it would resolve to
+    //    the same judgment-only model and return no text.
+    //  - "silent": the chat judge produced no output at all.
+    // An unparseable chat reply or a chat-child failure keeps failing closed.
+    let laneFailure: "native" | "silent" | undefined;
+    if (outcome.kind !== "verdict") {
+      if (lane) laneFailure = "native";
+      else if (outcome.kind === "empty" && outcome.reason !== "unparseable verdict") laneFailure = "silent";
+    }
     let fallbackModel: string | undefined;
-    if (outcome.kind === "empty" && outcome.reason !== "unparseable verdict") {
-      judgeSilent = true;
-      log(`judge silent (${outcome.reason}); falling back to ${[...DEEP_MODELS].join(", ")}`);
+    if (laneFailure && outcome.kind !== "verdict") {
+      log(
+        `${laneFailure === "native" ? "native judge failed" : "judge silent"} (${outcome.reason}); falling back to ${[...DEEP_MODELS].join(", ")}`,
+      );
       const fallback = await runJudgeFallback(
         invoker,
         subject,
@@ -339,20 +371,24 @@ export class ToolGate {
           content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }],
         });
       }
-      if (surfaces.notify) {
-        this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
-      }
-      if (judgeSilent && ctx.hasUI) {
-        // Kept warning: the verdict came from a fallback model because the
-        // judge produced no output — the operator should fix the judge role.
-        this.notify(ctx, t.format("notifyJudgeSilent", fallbackModel ?? ""), "warning");
-      }
+      // Kept lane note: the verdict came from a fallback model because the
+      // stage-1 lane failed — the operator should fix the judge role.  It
+      // goes out at info level (the host prefixes warning toasts with
+      // "Warning:"; the ⚠️ carries the signal) and rides on the approval
+      // toast, since consecutive info toasts collapse into one status line.
+      const laneNote =
+        laneFailure && ctx.hasUI
+          ? t.format(laneFailure === "native" ? "notifyNativeFailed" : "notifyJudgeSilent", fallbackModel ?? "")
+          : undefined;
+      const approved = surfaces.notify ? t.format("notifyApproved", label, summary ? `: ${summary}` : "") : undefined;
+      const toast = [approved, laneNote].filter((line) => line !== undefined).join("\n");
+      if (toast) this.notify(ctx, toast, "info");
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Only a first-pass verdict — or a silent-judge fallback verdict — may
-    // escalate to the deep pass. When the judge is unavailable, or silent
-    // with no fallback verdict, a deep-model "clear" must not authorize
+    // Only a first-pass verdict — or a lane-fallback (@tiny → @smol) verdict —
+    // may escalate to the deep pass. When the judge is unavailable, or its
+    // lane failed with no fallback verdict, a deep-model "clear" must not authorize
     // execution: the deep model is the weakest in the stack, so a broken
     // judge lane fails closed instead of handing approval authority to it.
     // (A truncated override still carries a real verdict, so over-budget
@@ -428,13 +464,13 @@ export class ToolGate {
         ...(deep ? { analysis: deep.text, deepModel: deep.model } : {}),
       });
     }
-    // A silent judge keeps its no-output reason on the user-facing
+    // A failed stage-1 lane keeps its lane reason on the user-facing
     // surfaces (the operator must fix the judge lane); the model-facing
     // denial text below still carries the fallback verdict's reason when
     // one exists.
     const reasonText =
-      judgeSilent && decision.reason !== "truncated"
-        ? t.format("reasonJudgeSilent")
+      laneFailure && decision.reason !== "truncated"
+        ? t.format(laneFailure === "native" ? "reasonNativeFailed" : "reasonJudgeSilent")
         : blockReasonText(t, decision.reason, verdict, outcome);
     const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, subject.length, cfg.subjectMaxChars);
     if (surfaces.marker) {

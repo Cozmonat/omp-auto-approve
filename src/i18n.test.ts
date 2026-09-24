@@ -27,11 +27,12 @@ const EXPECTED_KEYS = [
   "commandLabel", "codeLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
   "deniedJudgeSilent", "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
   "displayStatus", "fallbackStatus", "fallbackSwitched", "headlessNote", "help",
-  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked", "notifyJudgeSilent",
-  "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonJudgeSilent", "reasonMediumRisk", "reasonNoVerdict",
+  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked", "notifyJudgeSilent", "notifyNativeFailed",
+  "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonJudgeSilent", "reasonMediumRisk", "reasonNativeFailed",
+  "reasonNoVerdict",
   "reasonTruncated",
   "riskDeep", "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
-  "statusDisabled", "statusEnabled", "switchDisplay", "switchEnabled", "switchDisabled",
+  "statusDisabled", "statusEnabled", "statusJudgeChat", "statusJudgeNative", "switchDisplay", "switchEnabled", "switchDisabled",
   "switchRisk", "userDenied",
 ].sort();
 

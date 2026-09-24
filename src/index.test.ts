@@ -19,10 +19,20 @@ import { ConfigStore } from "./config";
 import { ModeManager } from "./mode-manager";
 import { createI18n } from "./i18n";
 import type { I18n } from "./i18n";
+import type { NativeJudge } from "./native-judge";
 import type { AutocompleteItem, ExtensionAPI, ExtensionCtx, LoggerLike } from "./types";
 
 const quietLogger: LoggerLike = { log: () => {} };
 const t = createI18n("en");
+
+/** No native lane: stage 1 runs on the RPC chat judge. */
+const chatOnly: NativeJudge = { resolve: async () => undefined };
+/** A native lane is live for every call. */
+const nativeLane: NativeJudge = {
+  resolve: async () => ({
+    judge: async () => ({ provider: "remote-judge-typesafe", model: "decider-v10", answers: {} }),
+  }),
+};
 
 const tmpDirs: string[] = [];
 function tmpDir(): string {
@@ -115,7 +125,7 @@ describe("/auto-approve handler", () => {
     const configDir = tmpDir();
     const modeManager = makeModeManager(configDir);
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
     expect(cmd.name).toBe("auto-approve");
 
@@ -139,7 +149,7 @@ describe("/auto-approve handler", () => {
   test("on / off set explicitly", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     modeManager.setEnabled(false);
@@ -154,16 +164,16 @@ describe("/auto-approve handler", () => {
     expect(modeManager.isEnabled()).toBe(false);
   });
 
-  test("status reflects enabled state with display, risk, and fallback", async () => {
+  test("status reflects enabled state with display, risk, fallback, and the stage-1 lane", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
     await runCommand(modeManager, cmd.handler, "status", ctx);
     expect(messages).toEqual([
-      "auto-approve: ON (display both, blocks risk high and above, fallback block)",
+      "auto-approve: ON (display both, blocks risk high and above, fallback block, judge @judge chat)",
     ]);
 
     modeManager.setEnabled(false);
@@ -172,11 +182,22 @@ describe("/auto-approve handler", () => {
     expect(messages).toEqual(["auto-approve: OFF (bash/eval pass through natively)"]);
   });
 
+  test("status names the native judge when the judge role resolves natively", async () => {
+    const modeManager = makeModeManager(tmpDir());
+    const { pi, command } = makeCommandPi();
+    registerAutoApproveCommand(pi, modeManager, t, nativeLane);
+    const { ctx, messages } = makeCommandCtx();
+    await runCommand(modeManager, command().handler, "status", ctx);
+    expect(messages).toEqual([
+      "auto-approve: ON (display both, blocks risk high and above, fallback block, judge native System One)",
+    ]);
+  });
+
   test("display <mode> validates, switches, and persists", async () => {
     const configDir = tmpDir();
     const modeManager = makeModeManager(configDir);
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
@@ -195,7 +216,7 @@ describe("/auto-approve handler", () => {
     const configDir = tmpDir();
     const modeManager = makeModeManager(configDir);
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
@@ -212,7 +233,7 @@ describe("/auto-approve handler", () => {
   test("unknown arguments show the help, never throw", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     const { ctx, messages } = makeCommandCtx();
@@ -224,7 +245,7 @@ describe("/auto-approve handler", () => {
     const configDir = tmpDir();
     const modeManager = makeModeManager(configDir);
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
@@ -241,7 +262,7 @@ describe("/auto-approve handler", () => {
   test("bare fallback reports the current policy", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
@@ -257,7 +278,7 @@ describe("/auto-approve handler", () => {
   test("bare display reports the current display mode", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();
@@ -273,7 +294,7 @@ describe("/auto-approve handler", () => {
   test("bare risk reports the current block risk level", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
-    registerAutoApproveCommand(pi, modeManager, t);
+    registerAutoApproveCommand(pi, modeManager, t, chatOnly);
     const cmd = command();
 
     let { ctx, messages } = makeCommandCtx();

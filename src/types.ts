@@ -117,7 +117,11 @@ export interface ExtensionCtx {
   sessionManager?: {
     getBranch?: () => unknown[];
     getEntries?: () => unknown[];
+    getSessionId?: () => string;
   };
+  /** Host model registry (opaque here): handed to the host's judge-role
+   *  chain by the native judge lane (native-judge.ts). */
+  modelRegistry?: unknown;
   ui: {
     confirm: (title: string, body: string) => Promise<boolean>;
     /** OMP's ui.select resolves with the chosen option's label (string), not
@@ -175,7 +179,8 @@ export type JudgeErrorCategory =
   | "timeout" // per-assessment window exhausted
   | "abort" // request aborted by its signal
   | "crash" // child exited mid-assessment
-  | "protocol"; // RPC handshake/ack rejected or malformed
+  | "protocol" // RPC handshake/ack rejected or malformed
+  | "provider"; // native judgment backend failed the request
 
 /** The classified result of one judge assessment. */
 export type JudgeOutcome =

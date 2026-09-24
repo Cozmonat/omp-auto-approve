@@ -19,6 +19,7 @@ import type { I18n } from "./i18n";
 import { ConfigStore } from "./config";
 import { HostResolver, type HostLaunchSpec } from "./host";
 import { JudgeInvoker, makeDeepChildFactory } from "./judge";
+import { HostNativeJudge, type NativeJudge } from "./native-judge";
 import { ModeManager, DISPLAY_VALUES, BLOCK_RISK_VALUES, FALLBACK_VALUES } from "./mode-manager";
 import { BashGate, EvalGate, type ToolGate } from "./gate";
 import { SessionContextGatherer } from "./context";
@@ -37,6 +38,8 @@ export interface AutoApproveOptions {
   childFactory?: RpcChildFactory;
   /** Injectable deep-analysis child factory (tests). */
   deepChildFactory?: RpcChildFactory;
+  /** Injectable native System One lane (tests); defaults to the host's. */
+  nativeJudge?: NativeJudge;
 }
 
 type ScheduleStatusClear = (callback: () => void) => void;
@@ -115,10 +118,12 @@ export function createAutoApproveCompletionProvider(
   };
 }
 
-/** The current settings as one localized line for the status command. */
-function statusText(modeManager: ModeManager, t: I18n): string {
+/** The current settings as one localized line for the status command,
+ *  naming the stage-1 lane the next assessment would use. */
+async function statusText(modeManager: ModeManager, t: I18n, nativeJudge: NativeJudge, ctx: ExtensionCtx): Promise<string> {
   if (!modeManager.isEnabled()) return t.format("statusDisabled");
-  return t.format("statusEnabled", modeManager.getDisplay(), modeManager.getBlockRisk(), modeManager.getFallback());
+  const lane = (await nativeJudge.resolve(ctx)) ? t.format("statusJudgeNative") : t.format("statusJudgeChat");
+  return t.format("statusEnabled", modeManager.getDisplay(), modeManager.getBlockRisk(), modeManager.getFallback(), lane);
 }
 
 /** Register the /auto-approve slash command. */
@@ -126,11 +131,12 @@ export function registerAutoApproveCommand(
   pi: Pick<ExtensionAPI, "registerCommand">,
   modeManager: ModeManager,
   t: I18n,
+  nativeJudge: NativeJudge,
 ): void {
   pi.registerCommand("auto-approve", {
     description: t.format("cmdDescription"),
     getArgumentCompletions: createAutoApproveCompletionProvider(t),
-    handler: (args: unknown, ctx: ExtensionCtx) => {
+    handler: async (args: unknown, ctx: ExtensionCtx) => {
       const arg = String(args ?? "").trim().toLowerCase();
       if (arg === "") {
         const next = !modeManager.isEnabled();
@@ -143,7 +149,7 @@ export function registerAutoApproveCommand(
         modeManager.setEnabled(false);
         showCommandResult(ctx, t.format("switchDisabled"));
       } else if (arg === "status") {
-        showCommandResult(ctx, statusText(modeManager, t));
+        showCommandResult(ctx, await statusText(modeManager, t, nativeJudge, ctx));
       } else if (arg === "display") {
         showCommandResult(ctx, t.format("displayStatus", modeManager.getDisplay()));
       } else if (arg === "risk") {
@@ -197,6 +203,7 @@ export class AutoApprove {
   readonly invoker: JudgeInvoker;
   readonly deepInvoker: JudgeInvoker;
   readonly contextGatherer: SessionContextGatherer;
+  readonly nativeJudge: NativeJudge;
   private readonly logger: LoggerLike;
   private readonly t: I18n;
   private readonly gates: ToolGate[];
@@ -229,6 +236,7 @@ export class AutoApprove {
       invokerOptions,
       options.deepChildFactory ?? makeDeepChildFactory(launch),
     );
+    this.nativeJudge = options.nativeJudge ?? new HostNativeJudge(this.logger);
     const gateDeps = {
       config: this.configStore,
       contextGatherer: this.contextGatherer,
@@ -236,6 +244,7 @@ export class AutoApprove {
       logger: this.logger,
       invoker: this.invoker,
       deepInvoker: this.deepInvoker,
+      nativeJudge: this.nativeJudge,
     };
     this.gates = [new BashGate(gateDeps), new EvalGate(gateDeps)];
   }
@@ -243,7 +252,7 @@ export class AutoApprove {
   /** Register the shadowed bash and eval tools, slash command, and shutdown hook. */
   register(): void {
     for (const gate of this.gates) gate.register(this.pi);
-    registerAutoApproveCommand(this.pi, this.modeManager, this.t);
+    registerAutoApproveCommand(this.pi, this.modeManager, this.t, this.nativeJudge);
     this.pi.on("session_shutdown", async () => {
       if (this.disposed) return;
       this.disposed = true;

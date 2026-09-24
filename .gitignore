@@ -18,6 +18,8 @@ build/
 *.js
 *.js.map
 *.d.ts
+# Hand-written ambient declarations for host-only OMP modules (not build output).
+!src/host-modules.d.ts
 
 # Logs
 *.log
