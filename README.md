@@ -58,7 +58,7 @@ Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide 
 Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two caveats matter in practice:
 
 - **A non-chat judge role cannot produce verdicts.** A TypeSafe-only `@judge` role answers typed-choice probes, not chat prompts; the RPC child then returns no assistant text and the plugin fails closed (`no-verdict`). Set `model` to a chat-capable role (`@smol`, `@tiny`, or a local chat endpoint). The local Decider server at `~/Documents/decider/decider_server.py` now exposes an OpenAI-compatible chat lane alongside its TypeSafe lane; configure an OMP chat model with base URL `http://127.0.0.1:8000/v1` and model `decider-2b-mlx-4bit`, then select it in the plugin config file. Its risk scores are uncalibrated: test representative commands before relying on unattended approvals. Do not use its TypeSafe-only role for this plugin.
-- **The command text is model-facing input to the judge.** The judge is a different model from the one that proposed the command, so self-deception is bounded — but the judge still reads the command, and small models can be manipulated by instructions embedded in it. The rubric tells the judge to treat the command text as untrusted, and any verdict the judge cannot express is a block. For sensitive work prefer `fallback: "ask"` (a human sees the full command and the deep analysis) or `blockRisk: "medium"` (fewer commands are auto-approved at all).
+- **The command text is model-facing input to both models.** The judge — and, under `fallback: "ask"`, the deep analyst — is a different model from the one that proposed the command, so self-deception is bounded; but both read the command, and small models can be manipulated by instructions embedded in it. Both rubrics tell the models to treat the command text as untrusted, and any verdict a model cannot express is a block. With `fallback: "ask"` this means a command the deep model *clears* is auto-approved **without a dialog** — a human only sees commands the deep model flags or cannot verdict. If you want no auto-execution of judge-flagged commands, use `fallback: "block"`; `blockRisk: "medium"` reduces how many commands are auto-approved at all.
 
 **Troubleshooting**
 
@@ -68,6 +68,7 @@ Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two
 | Every command blocked — "no usable verdict" | `model` points at a non-chat judgment role | Set `model` to a chat model (e.g. `@smol`, `@tiny`, or the Decider chat lane) |
 | Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or use a faster `model` |
 | A long command is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` |
+| Every command blocked — provider error about context length | The judge model's context window is smaller than the full prompt (rubric + command, up to `subjectMaxChars` characters); small local models are prone to this | Lower `subjectMaxChars` until the prompt fits the model's window, or use a judge with a larger window; commands fail closed until then |
 
 ## Headless sessions
 

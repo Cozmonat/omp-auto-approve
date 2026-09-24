@@ -146,11 +146,16 @@ export class BashGate {
       onUpdate?.({ content: [{ type: "text", text: t.format("analyzing") }] });
     }
 
+    // The prompts must describe where the command executes: a per-call
+    // `cwd` param wins over the session cwd — delegate() runs the native
+    // tool with the original params, so relative paths resolve against
+    // params.cwd, not the session root.
+    const execCwd = this.executionCwd(params, ctx.cwd);
     let outcome: JudgeOutcome;
     try {
       outcome = await invoker.assess(
         cfg.model,
-        buildJudgePrompt(command, cfg.subjectMaxChars, ctx.cwd),
+        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd),
         { timeoutMs: cfg.timeoutMs, signal },
       );
     } catch (e) {
@@ -214,7 +219,7 @@ export class BashGate {
         deepInvoker,
         cfg.deepModel,
         command,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: ctx.cwd, timeoutMs: cfg.timeoutMs, signal },
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, timeoutMs: cfg.timeoutMs, signal },
         logger,
       );
       if (signal?.aborted) {
@@ -362,6 +367,16 @@ export class BashGate {
   private extractSubject(params: unknown): string {
     const p = params as { command?: unknown } | null;
     return p && typeof p.command === "string" ? p.command : "";
+  }
+
+  /** The working directory in which the command will actually execute: a
+   *  non-empty per-call `cwd` param wins over the session cwd. The judge
+   *  and deep prompts must describe this context, because a relative path
+   *  in the command resolves against it. */
+  private executionCwd(params: unknown, sessionCwd: string | undefined): string | undefined {
+    const p = params as { cwd?: unknown } | null;
+    const cwd = p && typeof p.cwd === "string" ? p.cwd : "";
+    return cwd.trim() ? cwd : sessionCwd;
   }
 
   /** Run the native tool with the original params. */

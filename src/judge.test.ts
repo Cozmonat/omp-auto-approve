@@ -393,6 +393,19 @@ describe("deep analysis", () => {
     expect(prompt).toMatch(/untrusted/i);
   });
 
+  test("deep child contract: system prompt and rubric both require a JSON verdict", () => {
+    // The deep child is spawned with JUDGE_DEEP_SYSTEM_PROMPT and prompted
+    // with the deep rubric per call: the two surfaces must agree on the
+    // output shape, or a small model follows the prose instruction and
+    // deep-clear auto-approval silently stops working (regressed in 1.1.0
+    // when the rubric moved to JSON but the system prompt stayed prose).
+    const system = JUDGE_DEEP_SYSTEM_PROMPT.toLowerCase();
+    expect(system).toContain("json object");
+    expect(system).not.toContain("never json");
+    expect(system).not.toContain("prose");
+    expect(buildDeepPrompt("ls")).toContain("single JSON object");
+  });
+
   test("buildDeepPrompt truncates commands over subjectMaxChars", () => {
     const long = "b".repeat(5000);
     const bounded = buildDeepPrompt(long, 100);

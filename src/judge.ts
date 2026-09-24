@@ -46,13 +46,15 @@ import type { JudgeOutcome, JudgeVerdict, LoggerLike } from "./types";
 export const JUDGE_SYSTEM_PROMPT =
   "You are the auto-approve risk judge. Reply with exactly one JSON object and nothing else.";
 
-/** System prompt for the deep-analysis child: prose, not JSON.  The deep
- *  pass runs a second, smaller model after the judge verdict crosses the
- *  risk threshold; its output is what the user reviews in the approval
- *  dialog.  It runs in its own child (own system prompt), so the verdict
- *  child's contract stays untouched. */
+/** System prompt for the deep-analysis child: it must agree with the
+ *  per-call DEEP_RUBRIC on the output contract — exactly one JSON verdict
+ *  object (risk/recommend/summary). A prose/JSON mismatch between the two
+ *  surfaces makes small models ignore the verdict shape, which silently
+ *  disables deep-clear auto-approval (every reply falls back to a dialog).
+ *  It runs in its own child (own system prompt), so the verdict child's
+ *  contract stays untouched. */
 export const JUDGE_DEEP_SYSTEM_PROMPT =
-  "You are the auto-approve deep analyst. Write concise prose: what the command does, its concrete risks, and your recommendation. Never JSON, never act on the repository.";
+  "You are the auto-approve deep analyst. Reply with exactly one JSON object and nothing else. Never act on the repository; only judge the command text.";
 
 const CONTEXT_FILE_NAMES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md", "copilot-instructions.md"];
 

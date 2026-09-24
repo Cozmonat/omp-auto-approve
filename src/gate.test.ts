@@ -41,6 +41,7 @@ function pushUpdates(updates: string[], u: Update): void {
 function makeCtx(
   opts: {
     hasUI?: boolean;
+    cwd?: string;
     invokeTool?: (params: Record<string, unknown>, options?: InvokeToolOptions) => Promise<AgentToolResult>;
     select?: (title: string, choices: string[]) => Promise<string | number | undefined>;
     confirm?: (title: string, body: string) => Promise<boolean>;
@@ -56,7 +57,7 @@ function makeCtx(
   const dialogs: Array<{ title: string; body: string; choices?: string[] }> = [];
   const raw = {
     hasUI: opts.hasUI ?? true,
-    cwd: process.cwd(),
+    cwd: opts.cwd ?? process.cwd(),
     ui: {
       confirm:
         opts.confirm
@@ -247,6 +248,45 @@ describe("BashGate", () => {
     expect(result.isError ?? false).toBe(false);
     expect(calls).toHaveLength(1);
     expect(children).toHaveLength(0); // judge never spawned
+    await rig.dispose();
+  });
+
+  test("judge and deep prompts describe the execution cwd, not the session cwd", async () => {
+    // Regression: the call's own `cwd` param is where the command actually
+    // runs (delegation passes the original params to the native tool);
+    // judging against the session root would let a relative path resolve
+    // against the wrong target.
+    const prompts: string[] = [];
+    const capturing = (replyText: string) =>
+      new FakeRpcChild({
+        replyText,
+        onFrame: (f) => {
+          if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+        },
+      });
+    const judge = capturing(highVerdict); // flagged -> forces the deep pass
+    const deep = capturing('{"risk":"low","recommend":"allow","summary":"cleared"}');
+    const rig = makeRig(
+      () => judge,
+      [judge],
+      { fallback: "ask" },
+      () => deep,
+    );
+    const { ctx, calls, dialogs } = makeCtx({ cwd: "/session/repo" });
+    const result = await rig.gate.execute(
+      { command: "rm -rf build", cwd: "/etc" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(result.isError ?? false).toBe(false); // deep model cleared it
+    expect(calls).toHaveLength(1);
+    expect(dialogs).toHaveLength(0);
+    expect(prompts).toHaveLength(2); // judge and deep both prompted
+    for (const prompt of prompts) {
+      expect(prompt).toContain("Working directory: /etc");
+      expect(prompt).not.toContain("Working directory: /session/repo");
+    }
     await rig.dispose();
   });
 
