@@ -1188,7 +1188,7 @@ describe("native judge tier", () => {
     await rig.dispose();
   });
 
-  test("a native high-risk verdict blocks without consulting any chat model", async () => {
+  test("a native high-risk verdict skips the chat judge; with no deep verdict it blocks", async () => {
     const rpc = recordingFactory({ replyText: lowVerdict });
     const { native } = nativeJudge(async () => nativeResult("high"));
     const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);

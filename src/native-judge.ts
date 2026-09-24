@@ -143,7 +143,9 @@ export async function assessNative(
 
   const answer = result.answers.risk;
   const risk = riskChoice(answer);
-  const label = `${result.provider}/${result.model}`;
+  // Backend-echoed fields: redact like any failure reason before logging or
+  // returning them to the model.
+  const label = redactForLog(`${result.provider}/${result.model}`);
   if (!risk) {
     logger?.log(`native: ${label} returned no usable risk choice ${elapsed()}`);
     return { kind: "error", category: "protocol", reason: `native judge ${label} returned no usable risk choice` };

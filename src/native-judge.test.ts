@@ -125,6 +125,21 @@ describe("assessNative", () => {
     expect(logs.join("\n")).not.toContain("judge.internal");
   });
 
+  test("a protocol error echoing backend fields is redacted too", async () => {
+    const logs: string[] = [];
+    const result: NativeJudgmentResult = {
+      provider: "p",
+      model: "m http://judge.internal:8002 sk-abcdefghijklmnop1234",
+      answers: { risk: { type: "choice", choice: "maybe" } },
+    };
+    const outcome = await assessNative(laneReturning(result), request, { timeoutMs: 1000 }, { log: (m) => logs.push(m) });
+    const reason = outcome.kind === "error" ? outcome.reason : "";
+    for (const text of [reason, logs.join("\n")]) {
+      expect(text).not.toContain("sk-abcdefghijklmnop1234");
+      expect(text).not.toContain("judge.internal");
+    }
+  });
+
   test("the assessment window bounds the call and classifies as timeout", async () => {
     const outcome = await assessNative(hangingLane, request, { timeoutMs: 20 }, quietLogger);
     expect(outcome.kind === "error" && outcome.category).toBe("timeout");
