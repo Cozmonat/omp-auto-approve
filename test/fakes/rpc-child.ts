@@ -225,7 +225,7 @@ export class FakeRpcChild {
           }
           const text = this.options.replies
             ? (this.options.replies[this.replySeq] ?? this.options.replies[this.options.replies.length - 1])
-            : (this.options.replyText ?? "OK");
+            : (this.options.replyText === undefined ? "OK" : this.options.replyText);
           this.replySeq += 1;
           this.pushFrame({
             type: "agent_end",

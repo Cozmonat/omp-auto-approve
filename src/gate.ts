@@ -85,8 +85,16 @@ function blockReasonText(
   if (decisionReason === "fallback") {
     // Empty means the judge answered but produced no usable verdict —
     // saying "unavailable" would mislead the model (and the user) about
-    // why the block happened.
-    return outcome.kind === "empty" ? t.format("reasonNoVerdict") : t.format("reasonFallback");
+    // why the block happened. Two distinct empties: unparseable text (the
+    // model did respond) versus no output at all, which usually signals a
+    // broken judge/provider lane (e.g. a native System One / typesafe judge
+    // model that cannot answer a chat prompt after a host update).
+    if (outcome.kind === "empty") {
+      return outcome.reason === "unparseable verdict"
+        ? t.format("reasonNoVerdict")
+        : t.format("reasonJudgeSilent");
+    }
+    return t.format("reasonFallback");
   }
   if (decisionReason === "ai-recommend") return t.format("reasonDeny");
   return verdict?.risk === "high" ? t.format("reasonHighRisk") : t.format("reasonMediumRisk");
@@ -364,9 +372,15 @@ export class BashGate {
     } else if (decisionReason === "truncated") {
       text = t.format("deniedTooLong", String(commandLength ?? ""), String(subjectMaxChars ?? ""));
     } else if (outcome.kind === "empty") {
-      // The judge responded but produced no usable verdict — distinct from
-      // "could not be consulted": retrying helps, re-asking does not.
-      text = t.format("deniedNoVerdict");
+      // Two distinct failures: the model answered but the text was
+      // unparseable (retrying may help), or the model produced no text at
+      // all (a broken judge/provider lane — "responded but unusable" would
+      // misdirect diagnosis, as a native System One / typesafe judge model
+      // pointed at a chat prompt after a host update).
+      text =
+        outcome.reason === "unparseable verdict"
+          ? t.format("deniedNoVerdict")
+          : t.format("deniedJudgeSilent", outcome.reason);
     } else {
       const category = outcome.kind === "error" ? outcome.category : "unavailable";
       text = t.format("deniedJudgeUnavailable", category);

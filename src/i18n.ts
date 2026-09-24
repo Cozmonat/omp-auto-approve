@@ -28,6 +28,7 @@ interface Dictionary {
   reasonMediumRisk: string;
   reasonTruncated: string;
   reasonNoVerdict: string;
+  reasonJudgeSilent: string;
   riskLow: string;
   riskMedium: string;
   riskHigh: string;
@@ -36,6 +37,7 @@ interface Dictionary {
   deniedJudgeRisk: string;
   deniedJudgeUnavailable: string;
   deniedNoVerdict: string;
+  deniedJudgeSilent: string;
   deniedTooLong: string;
   deniedUserDenied: string;
   headlessNote: string;
@@ -98,6 +100,7 @@ const EN: Dictionary = {
   reasonMediumRisk: "medium risk",
   reasonTruncated: "too long to assess in full",
   reasonNoVerdict: "no usable verdict",
+  reasonJudgeSilent: "judge produced no output",
   riskLow: "low risk",
   riskMedium: "medium risk",
   riskHigh: "high risk",
@@ -106,6 +109,7 @@ const EN: Dictionary = {
   deniedJudgeRisk: "The judge model rated this command {0}{1}. Nothing was executed. Do not retry the same command; use a safer alternative.",
   deniedJudgeUnavailable: "The judge model could not be consulted ({0}), so this command was blocked by the fail-closed default. Nothing was executed; the command was not assessed as dangerous. Retry once the judge is available, or use a clearly safe command.",
   deniedNoVerdict: "The judge model responded but did not produce a usable risk verdict, so this command was blocked by the fail-closed default. Nothing was executed. Retry the assessment, or use a clearly safe command.",
+  deniedJudgeSilent: "The judge model produced no output at all ({0}), so this command was blocked by the fail-closed default. Nothing was executed. This usually means the judge model or its provider cannot complete a chat response — for example, a native System One / typesafe-lane judge model cannot answer a chat prompt after a host update. Check the judge model's provider configuration (chat lane, e.g. an openai-completions provider entry) and the plugin's `model` setting, then retry.",
   deniedTooLong: "This command is {0} characters long; the judge can only assess the first {1}, so it was blocked by the fail-closed default. Nothing was executed. Split it into shorter commands so each one can be fully assessed.",
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
@@ -168,6 +172,7 @@ const ZH: Dictionary = {
   reasonMediumRisk: "中风险",
   reasonTruncated: "过长,无法完整评估",
   reasonNoVerdict: "无可用的风险判定",
+  reasonJudgeSilent: "裁判未产生任何输出",
   riskLow: "低风险",
   riskMedium: "中风险",
   riskHigh: "高风险",
@@ -176,6 +181,7 @@ const ZH: Dictionary = {
   deniedJudgeRisk: "裁判模型将该命令评为{0}{1}。未执行任何内容。不要重试相同命令;请改用更安全的替代方案。",
   deniedJudgeUnavailable: "无法咨询裁判模型({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容;该命令未被评估为危险。请在裁判可用后重试,或改用明显安全的命令。",
   deniedNoVerdict: "裁判模型有响应,但未给出可用的风险判定,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请重试评估,或改用明显安全的命令。",
+  deniedJudgeSilent: "裁判模型完全没有产生任何输出({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。这通常意味着裁判模型或其提供商无法完成一次聊天响应——例如宿主更新后,原生 System One / typesafe 通道的裁判模型无法回答聊天提示。请检查裁判模型的提供商配置(聊天通道,如 openai-completions 提供商条目)与插件的 `model` 设置,然后重试。",
   deniedTooLong: "该命令长达 {0} 个字符;裁判只能评估前 {1} 个字符,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请拆分为更短的命令,使每条命令都能被完整评估。",
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",

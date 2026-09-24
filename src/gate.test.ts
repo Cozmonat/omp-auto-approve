@@ -758,6 +758,38 @@ describe("BashGate over-budget commands", () => {
     await rig.dispose();
   });
 
+  test("an empty-completion judge response blocks with a no-output explanation", async () => {
+    // The judge produced no assistant text at all (e.g. a native System One
+    // / typesafe judge lane that cannot answer a chat prompt). Distinct
+    // from an unparseable response: retrying does not help, the
+    // configuration does — the denial must say so.
+    const { factory, children } = fakeChildFactory([{ replyText: null }], {});
+    const rig = makeRig(factory, children);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    const text = result.content[0].text;
+    expect(text).toContain("produced no output at all");
+    expect(text).toContain("empty completion");
+    // The toast names the silent judge, not the unparseable-verdict reason.
+    expect(
+      notifications.some((n) => n.level === "warning" && n.msg.includes("judge produced no output")),
+    ).toBe(true);
+    await rig.dispose();
+  });
+
+  test("a reasoning-only judge response blocks with a no-output explanation", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: null, reasoningDeltas: ["thinking…"] }], {});
+    const rig = makeRig(factory, children);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(result.content[0].text).toContain("reasoning-only output");
+    await rig.dispose();
+  });
+
   test("a short command at exactly the cap is still auto-approved", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
     const rig = makeRig(factory, children, {});
