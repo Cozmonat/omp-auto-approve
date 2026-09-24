@@ -597,34 +597,87 @@ describe("BashGate fallback escalation", () => {
     await rig.dispose();
   });
 
-  test("fallback=ask without a UI degrades to a plain block (no deep model)", async () => {
+  test("fallback=ask without a UI still runs the deep review: a cleared command auto-approves", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highRiskOnly }], {});
-    const rig = makeRig(factory, children, { fallback: "ask", display: "off" });
-    const { ctx, calls, notifications } = makeCtx({ hasUI: false });
-    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
-    expect(calls).toHaveLength(0);
-    expect(rig.deepChildren).toHaveLength(0); // headless ask never escalates
-    expect(result.isError).toBe(true);
-    const details = result.details as { reason?: string; headless?: boolean } | undefined;
-    expect(details?.reason).toBe("ai-risk");
-    expect(details?.headless).toBe(true);
-    expect(notifications).toHaveLength(0); // headless has no toast surface
-    expect(result.content[0].text).toContain("headless");
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"removes a scratch dir"}' });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({ hasUI: false, select: async () => 0 });
+    const result = await rig.gate.execute({ command: "rm -rf ./tmp-scratch" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(deep.children).toHaveLength(1);
+    expect(dialogs).toHaveLength(0);
     await rig.dispose();
   });
 
-  test("fallback=block never escalates: no deep model is launched", async () => {
+  test("fallback=block: a deep model clearing the command auto-approves without asking", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highRiskOnly }], {});
-    const rig = makeRig(factory, children, { fallback: "block", display: "off" });
-    const { ctx, calls, notifications } = makeCtx();
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"removes a scratch dir"}' });
+    const rig = makeRig(factory, children, { fallback: "block", display: "both" }, deep.factory);
+    const { ctx, calls, dialogs, notifications } = makeCtx({ select: async () => 0 });
+    const result = await rig.gate.execute({ command: "rm -rf ./tmp-scratch" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(dialogs).toHaveLength(0);
+    expect(notifications).toEqual([{ msg: "✅ Auto-approved — deep review: removes a scratch dir", level: "info" }]);
+    await rig.dispose();
+  });
+
+  test("fallback=block: a deep model confirming the risk blocks without asking, naming the second review", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highRiskOnly }], {});
+    const deep = deepSpecs({ "@tiny": '{"risk":"high","recommend":"deny","summary":"deletes the filesystem root."}' });
+    const rig = makeRig(factory, children, { fallback: "block", display: "off" }, deep.factory);
+    const { ctx, calls, dialogs, notifications } = makeCtx({ select: async () => 0 });
     const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
     expect(calls).toHaveLength(0);
-    expect(rig.deepChildren).toHaveLength(0);
+    expect(dialogs).toHaveLength(0);
     expect(result.isError).toBe(true);
-    const details = result.details as { reason?: string; risk?: string } | undefined;
-    expect(details?.reason).toBe("ai-risk");
-    expect(details?.risk).toBe("high");
+    expect(result.content[0].text).toContain("A second review (@tiny) also flagged it: deletes the filesystem root.");
+    expect(result.content[0].text).not.toContain("root..");
+    expect(result.details).toMatchObject({ blocked: true, reason: "ai-risk", risk: "high", deepModel: "@tiny" });
     expect(notifications.some((n) => n.level === "warning")).toBe(true);
+    await rig.dispose();
+  });
+
+  test("a long deep summary is bounded in the denial text", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highRiskOnly }], {});
+    const long = "x".repeat(2000);
+    const deep = deepSpecs({ "@tiny": `{"risk":"high","recommend":"deny","summary":"${long}"}` });
+    const rig = makeRig(factory, children, { fallback: "block", display: "off" }, deep.factory);
+    const { ctx } = makeCtx();
+    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
+    const text = result.content[0].text;
+    expect(text).toContain(`also flagged it: ${"x".repeat(300)}….`);
+    expect(text).not.toContain("x".repeat(301));
+    await rig.dispose();
+  });
+
+  test("a deep clear after a failed judge lane keeps the lane note on the approval toast", async () => {
+    // @judge silent → @tiny verdict high → deep review (@tiny) clears it.
+    const { factory, children } = fakeChildFactory([{ replyText: null }, { replyText: highRiskOnly }], {});
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"removes a scratch dir"}' });
+    const rig = makeRig(factory, children, { fallback: "block", display: "both" }, deep.factory);
+    const { ctx, calls, notifications } = makeCtx();
+    await rig.gate.execute({ command: "rm -rf ./tmp-scratch" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(1);
+    expect(notifications).toEqual([
+      {
+        msg: "✅ Auto-approved — deep review: removes a scratch dir\n⚠️ Judge produced no output (verdict from @tiny)",
+        level: "info",
+      },
+    ]);
+    await rig.dispose();
+  });
+
+  test("fallback=block: with no deep verdict the first-pass block stands", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highRiskOnly }], {});
+    const rig = makeRig(factory, children, { fallback: "block", display: "off" });
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(0);
+    expect(rig.deepChildren).toHaveLength(2); // @tiny, then @smol, both dead
+    expect(result.details).toMatchObject({ reason: "ai-risk", risk: "high" });
+    expect(result.content[0].text).not.toContain("second review");
     await rig.dispose();
   });
 
@@ -754,19 +807,30 @@ describe("BashGate fallback escalation", () => {
 });
 
 describe("BashGate headless", () => {
-  test("fallback=ask never prompts headlessly: blocks with reason prose and no deep model", async () => {
+  test("fallback=ask headless: a deep review that confirms the risk blocks with prose, never a dialog", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
-    const rig = makeRig(factory, children, { fallback: "ask", display: "off" });
+    const deep = {
+      children: [] as FakeRpcChild[],
+      factory(model: string) {
+        const child = new FakeRpcChild(
+          model === "@tiny" ? { replyText: '{"risk":"high","recommend":"deny","summary":"wipes the disk"}' } : { dead: true },
+        );
+        this.children.push(child);
+        return child;
+      },
+    };
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, (m) => deep.factory(m));
     const { ctx, calls, dialogs, notifications } = makeCtx({ hasUI: false, select: async () => 0 });
     const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
     expect(calls).toHaveLength(0);
-    expect(rig.deepChildren).toHaveLength(0); // ask degrades to block without a UI
+    expect(deep.children).toHaveLength(1);
     expect(dialogs).toHaveLength(0);
     expect(notifications).toHaveLength(0); // no toast surface headlessly
     expect(result.isError).toBe(true);
     const text = result.content[0].text;
     expect(text).toContain("declined"); // judge recommendation named as the reason
-    expect(text).toContain("headless"); // and that no dialog was shown
+    expect(text).toContain("A second review (@tiny) also flagged it: wipes the disk.");
+    expect(text.endsWith(t.format("headlessNote"))).toBe(true);
     const details = result.details as { reason?: string; headless?: boolean } | undefined;
     expect(details?.reason).toBe("ai-recommend");
     expect(details?.headless).toBe(true);
@@ -878,6 +942,19 @@ describe("BashGate over-budget commands", () => {
     expect(dialogs).toHaveLength(1);
     // The dialog shows the FULL command, not the judged prefix.
     expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
+    await rig.dispose();
+  });
+
+  test("fallback=block: an over-budget command blocks as too long without a deep review", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const deep = deepSpecsLocal({ "@tiny": '{"risk":"low","recommend":"allow","summary":"looks fine"}' });
+    const rig = makeRig(factory, children, { fallback: "block" }, deep.factory);
+    rig.store.config.subjectMaxChars = 50;
+    const { ctx, calls } = makeCtx({ hasUI: false });
+    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(0);
+    expect(deep.children).toHaveLength(0); // a deep clear could never authorize it
+    expect(result.details).toMatchObject({ reason: "truncated" });
     await rig.dispose();
   });
 

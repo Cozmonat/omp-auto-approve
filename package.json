@@ -57,7 +57,7 @@
       },
       "fallback": {
         "default": "block",
-        "description": "Policy when the judge crosses the risk threshold or no usable verdict arrives: block (fail-closed default, deny without asking) or ask (a deep-analysis model re-analyzes the command — a cleared command is auto-approved, a risky one opens a dialog for the user to decide; degrades to block without a UI).",
+        "description": "What happens after the judge rates a command at or above the risk threshold: a deep-analysis model re-analyzes it (UI and headless sessions alike) and a cleared command is auto-approved. For a command the deep model also flags: block (default, deny without asking) or ask (open a dialog for the user to decide; blocks without a UI). A judge with no usable verdict always blocks.",
         "type": "enum",
         "values": [
           "ask",
@@ -77,5 +77,5 @@
     "test": "bun test src",
     "typecheck": "tsc --noEmit"
   },
-  "version": "1.4.0"
+  "version": "1.5.0"
 }

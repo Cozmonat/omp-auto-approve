@@ -12,13 +12,14 @@
  * the threshold the call delegates to the native tool via ctx.invokeTool
  * (inheriting shell path resolution, env hardening, PTY and output
  * truncation for bash; in-process execution for eval).  Above the
- * threshold: fallback=block denies; fallback=ask consults a deep-analysis
- * model (tiny, then smol), whose verdict either auto-approves a cleared
- * command or, on real risk, is reviewed by the user in a dialog.  Headless
- * sessions (no UI) never prompt — even with fallback=ask they block, and
- * the denial text tells the model why (judge declined / risk rating /
- * judge unavailable, plus a headless note) so it can choose a safer
- * alternative.
+ * threshold a deep-analysis model (tiny, then smol) re-analyzes the
+ * subject in every session and under every fallback: a cleared subject is
+ * auto-approved; a confirmed risk blocks (fallback=block, or any headless
+ * session) or is reviewed by the user in a dialog (fallback=ask with a
+ * UI).  Headless sessions never prompt, and the denial text tells the
+ * model why (judge declined / risk rating, plus the second review's
+ * finding / judge unavailable, and a headless note) so it can choose a
+ * safer alternative.
  *
  * Surfaces per display setting: marker = streamed tool-card line,
  * notify = chat toast (UI sessions only).  Blocked verdicts are always
@@ -30,6 +31,7 @@ import {
   JUDGE_MODEL,
   runDeepAnalysis,
   runJudgeFallback,
+  type DeepAnalysis,
   type JudgeInvoker,
   type SubjectInfo,
 } from "./judge";
@@ -157,6 +159,9 @@ export const EVAL_TOOL_SPEC: ToolSpec = {
     return { kind: "eval", language: p?.language === "js" ? "javascript" : "python" };
   },
 };
+
+/** Cap on the deep reviewer's summary quoted in a model-facing denial. */
+const DEEP_SUMMARY_MAX_CHARS = 300;
 
 /** Localized label for a judge risk rating. */
 function riskLabel(t: I18n, risk: JudgeVerdict["risk"] | undefined): string {
@@ -363,6 +368,21 @@ export class ToolGate {
     }
     log(`decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
+    // Kept lane note: the verdict came from a fallback model because the
+    // stage-1 lane failed — the operator should fix the judge role.  It goes
+    // out at info level (the host prefixes warning toasts with "Warning:";
+    // the ⚠️ carries the signal) and rides on whichever approval toast
+    // follows, since consecutive info toasts collapse into one status line.
+    const laneNote =
+      laneFailure && ctx.hasUI
+        ? t.format(laneFailure === "native" ? "notifyNativeFailed" : "notifyJudgeSilent", fallbackModel ?? "")
+        : undefined;
+    const notifyApproval = (label: string, summary: string | undefined): void => {
+      const approved = surfaces.notify ? t.format("notifyApproved", label, summary ? `: ${summary}` : "") : undefined;
+      const toast = [approved, laneNote].filter((line) => line !== undefined).join("\n");
+      if (toast) this.notify(ctx, toast, "info");
+    };
+
     if (decision.verdict === "allow") {
       const label = riskLabel(t, verdict?.risk);
       const summary = verdict?.summary;
@@ -371,35 +391,30 @@ export class ToolGate {
           content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }],
         });
       }
-      // Kept lane note: the verdict came from a fallback model because the
-      // stage-1 lane failed — the operator should fix the judge role.  It
-      // goes out at info level (the host prefixes warning toasts with
-      // "Warning:"; the ⚠️ carries the signal) and rides on the approval
-      // toast, since consecutive info toasts collapse into one status line.
-      const laneNote =
-        laneFailure && ctx.hasUI
-          ? t.format(laneFailure === "native" ? "notifyNativeFailed" : "notifyJudgeSilent", fallbackModel ?? "")
-          : undefined;
-      const approved = surfaces.notify ? t.format("notifyApproved", label, summary ? `: ${summary}` : "") : undefined;
-      const toast = [approved, laneNote].filter((line) => line !== undefined).join("\n");
-      if (toast) this.notify(ctx, toast, "info");
+      notifyApproval(label, summary);
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Only a first-pass verdict — or a lane-fallback (@tiny → @smol) verdict —
-    // may escalate to the deep pass. When the judge is unavailable, or its
-    // lane failed with no fallback verdict, a deep-model "clear" must not authorize
-    // execution: the deep model is the weakest in the stack, so a broken
-    // judge lane fails closed instead of handing approval authority to it.
-    // (A truncated override still carries a real verdict, so over-budget
-    // subjects keep their human dialog.)
-    const deepEscalation = outcome.kind === "verdict" && cfg.fallback === "ask" && ctx.hasUI;
-    if (cfg.fallback === "ask" && ctx.hasUI && outcome.kind !== "verdict") {
+    // Deep review: a real first-pass verdict — or a lane-fallback
+    // (@tiny → @smol) verdict — that crossed the threshold is re-analyzed in
+    // every session and under every fallback.  A deep "clear" auto-approves
+    // (headless too); a deep flag blocks, except fallback=ask with a UI,
+    // where the user decides in a dialog.  When the judge is unavailable, or
+    // its lane failed with no fallback verdict, there is nothing to review:
+    // a deep-model "clear" must not authorize execution (the deep model is
+    // the weakest in the stack), so a broken judge lane fails closed.  An
+    // over-budget subject can never be deep-approved, so it is only reviewed
+    // when a dialog can follow.
+    const overBudget = subject.length > cfg.subjectMaxChars;
+    const canAsk = cfg.fallback === "ask" && ctx.hasUI;
+    const deepEscalation = outcome.kind === "verdict" && (canAsk || !overBudget);
+    if (outcome.kind !== "verdict") {
       log(`first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
     }
+    let deep: DeepAnalysis | null = null;
     if (deepEscalation) {
       const { deepInvoker } = this.deps;
-      const deep = await runDeepAnalysis(
+      deep = await runDeepAnalysis(
         deepInvoker,
         subject,
         { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
@@ -409,26 +424,21 @@ export class ToolGate {
         log("aborted during deep analysis");
         return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
       }
-      const overBudget = subject.length > cfg.subjectMaxChars;
       const deepDecision = decide(deep?.verdict ?? null, cfg.blockRisk);
       if (!overBudget && deepDecision.verdict === "allow") {
         // The deeper analysis re-checked the subject and cleared it: no real
         // risk at the configured threshold, so approve without a dialog.
-        if (signal?.aborted) {
-          log("aborted after deep analysis, not executing");
-          return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
-        }
         const label = t.format("riskDeep");
         const summary = deep?.verdict?.summary;
         if (surfaces.marker) {
           onUpdate?.({ content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }] });
         }
-        if (surfaces.notify) {
-          this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
-        }
+        notifyApproval(label, summary);
         log(`deep analysis cleared the subject, auto-approving (risk=${deep?.verdict?.risk ?? "unknown"})`);
         return this.delegate(params, signal, onUpdate, ctx);
       }
+    }
+    if (deepEscalation && canAsk) {
       // The deep model flagged a real risk, produced no usable verdict, or the
       // subject is over budget (only a human can review the full subject):
       // show the user dialog.
@@ -448,9 +458,7 @@ export class ToolGate {
         if (surfaces.marker) {
           onUpdate?.({ content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }] });
         }
-        if (surfaces.notify) {
-          this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
-        }
+        notifyApproval(label, summary);
         log("user approved, delegating to native");
         return this.delegate(params, signal, onUpdate, ctx);
       }
@@ -472,7 +480,20 @@ export class ToolGate {
       laneFailure && decision.reason !== "truncated"
         ? t.format(laneFailure === "native" ? "reasonNativeFailed" : "reasonJudgeSilent")
         : blockReasonText(t, decision.reason, verdict, outcome);
-    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, subject.length, cfg.subjectMaxChars);
+    // A deep review that also flagged the subject is named in the denial, so
+    // the agent knows a second model confirmed the risk.  The template ends
+    // the sentence itself, so the summary's own final punctuation is dropped;
+    // the summary is model output fed back to the agent, so it is bounded.
+    const trimmed = deep?.verdict?.summary?.replace(/[.!?。]+$/u, "");
+    const deepSummary =
+      trimmed && trimmed.length > DEEP_SUMMARY_MAX_CHARS ? `${trimmed.slice(0, DEEP_SUMMARY_MAX_CHARS)}…` : trimmed;
+    const deepNote = deep?.verdict
+      ? t.format("deniedDeepConfirmed", deep.model, deepSummary ? `: ${deepSummary}` : "")
+      : "";
+    if (deep) {
+      log(`deep analysis (${deep.model}) did not clear the subject (risk=${deep.verdict?.risk ?? "unknown"}); blocking`);
+    }
+    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, subject.length, cfg.subjectMaxChars, deepNote);
     if (surfaces.marker) {
       onUpdate?.({ content: [{ type: "text", text: t.format("markerBlocked", reasonText) }] });
     }
@@ -490,6 +511,7 @@ export class ToolGate {
       ...(decision.reason === "truncated"
         ? { length: subject.length, subjectMaxChars: cfg.subjectMaxChars }
         : {}),
+      ...(deep ? { analysis: deep.text, deepModel: deep.model } : {}),
     });
   }
 
@@ -530,6 +552,7 @@ export class ToolGate {
     hasUI: boolean,
     subjectLength?: number,
     subjectMaxChars?: number,
+    deepNote: string = "",
   ): string {
     let text: string;
     if (decisionReason === "ai-recommend") {
@@ -564,6 +587,7 @@ export class ToolGate {
           : category;
       text = t.format("deniedJudgeUnavailable", detail);
     }
+    text += deepNote;
     return hasUI ? text : text + t.format("headlessNote");
   }
 

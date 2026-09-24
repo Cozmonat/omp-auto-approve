@@ -25,7 +25,7 @@ const EXPECTED_KEYS = [
   "cmdOffDescription", "cmdOnDescription", "cmdRiskDescription",
   "cmdRiskHighDescription", "cmdRiskMediumDescription", "cmdStatusDescription",
   "commandLabel", "codeLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
-  "deniedJudgeSilent", "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
+  "deniedDeepConfirmed", "deniedJudgeSilent", "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
   "displayStatus", "fallbackStatus", "fallbackSwitched", "headlessNote", "help",
   "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked", "notifyJudgeSilent", "notifyNativeFailed",
   "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonJudgeSilent", "reasonMediumRisk", "reasonNativeFailed",

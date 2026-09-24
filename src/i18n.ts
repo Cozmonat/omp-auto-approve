@@ -43,6 +43,7 @@ interface Dictionary {
   deniedJudgeSilent: string;
   deniedTooLong: string;
   deniedUserDenied: string;
+  deniedDeepConfirmed: string;
   headlessNote: string;
   analyzing: string;
   analyzingEval: string;
@@ -124,6 +125,7 @@ const EN: Dictionary = {
   deniedJudgeSilent: "The judge model produced no output at all ({0}), so this command was blocked by the fail-closed default. Nothing was executed. This usually means the judge model or its provider cannot complete a chat response — for example, a native System One / typesafe judge model reached through the chat lane because this host does not expose OMP's native judgment modules. Update OMP so the native judge is used directly, or point the `judge` role in your OMP config (models.yml / config.yml) at a chat-lane entry (e.g. an openai-completions provider), then retry.",
   deniedTooLong: "This command is {0} characters long; the judge can only assess the first {1}, so it was blocked by the fail-closed default. Nothing was executed. Split it into shorter commands so each one can be fully assessed.",
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
+  deniedDeepConfirmed: " A second review ({0}) also flagged it{1}.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
   analyzing: "👀 Reviewing command with judge model…",
   analyzingEval: "👀 Reviewing code with judge model…",
@@ -138,8 +140,8 @@ const EN: Dictionary = {
   cmdRiskMediumDescription: "block medium and high risk",
   cmdRiskHighDescription: "block high risk only",
   cmdFallbackDescription: "set the policy when the risk threshold is crossed (ask|block)",
-  cmdFallbackAskDescription: "ask the user with the deep-analysis summary",
-  cmdFallbackBlockDescription: "block without asking",
+  cmdFallbackAskDescription: "deep review clears or asks the user in a dialog",
+  cmdFallbackBlockDescription: "deep review clears or blocks, never asks",
   fallbackStatus: "fallback policy: {0}",
   fallbackSwitched: "fallback policy set to {0}.",
   displayStatus: "display mode: {0}",
@@ -203,6 +205,7 @@ const ZH: Dictionary = {
   deniedJudgeSilent: "裁判模型完全没有产生任何输出({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。这通常意味着裁判模型或其提供商无法完成一次聊天响应——例如原生 System One / typesafe 裁判模型经由聊天通道调用,因为当前宿主未提供 OMP 的原生判定模块。请更新 OMP 以直接使用原生裁判,或将 OMP 配置(models.yml / config.yml)中的 `judge` 角色指向聊天通道条目(如 openai-completions 提供商),然后重试。",
   deniedTooLong: "该命令长达 {0} 个字符;裁判只能评估前 {1} 个字符,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请拆分为更短的命令,使每条命令都能被完整评估。",
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
+  deniedDeepConfirmed: "第二轮复核({0})同样判定其有风险{1}。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",
   analyzing: "👀 正在使用裁判模型审查命令…",
   analyzingEval: "👀 正在使用裁判模型审查代码…",
@@ -217,8 +220,8 @@ const ZH: Dictionary = {
   cmdRiskMediumDescription: "拦截中、高风险",
   cmdRiskHighDescription: "仅拦截高风险",
   cmdFallbackDescription: "设置风险阈值被越过时的策略 (ask|block)",
-  cmdFallbackAskDescription: "用深度分析摘要询问用户",
-  cmdFallbackBlockDescription: "不询问,直接拦截",
+  cmdFallbackAskDescription: "深度复核放行,否则弹窗询问用户",
+  cmdFallbackBlockDescription: "深度复核放行,否则直接拦截,从不询问",
   fallbackStatus: "回退策略: {0}",
   fallbackSwitched: "回退策略已设为 {0}。",
   displayStatus: "展示方式: {0}",
