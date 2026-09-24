@@ -18,9 +18,10 @@ LLM calls bash
 BashGate.execute()
    ├─ enabled: false ────────────────────────────────► delegate to native bash
    │
-   ├─ Stage 1: judge verdict (config.model, default @judge)
+   ├─ Stage 1: judge verdict (the host's @judge role, resolved from your OMP model config)
   │     one-shot prompt: fixed rubric + working directory + session context
-  │     (conversation excerpts, capped at contextMaxChars) + command subject
+  │     (conversation excerpts, capped at contextMaxChars) + referenced script
+  │     file contents (each capped at scriptMaxChars) + command subject
   │     (capped at subjectMaxChars) → JSON { risk: low|medium|high, recommend: allow|deny }
    │     run by a persistent `omp --mode rpc` child (spawned lazily,
    │     per-assessment session reset, idle-reaped, respawned on model change)
@@ -39,9 +40,9 @@ BashGate.execute()
                ├─ no UI (headless session) ───────────► plain block (never asks)
                │
                └─ UI available
-                     Stage 2: deep analysis (config.deepModel, default @tiny;
-                     retries @smol when @tiny is unavailable; a separate
-                     persistent RPC child re-analyzes and returns a verdict)
+                    Stage 2: deep analysis (the fixed @tiny role, retrying @smol
+                    when unavailable; a separate persistent RPC child re-analyzes
+                    and returns a verdict)
                      ├─ deep model clears it (no real risk) ─► auto-approve +
                      │                                          display surfaces
                      └─ deep model flags a real risk (or no verdict)
@@ -58,9 +59,9 @@ Stage 2 is only ever paid when a verdict the judge actually produced crosses the
 
 ## Judge model
 
-Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two caveats matter in practice:
+Stage-1 verdicts run on the host's `@judge` model role, resolved from your OMP model config (`~/.omp/agent/models.yml` / `config.yml`) — the plugin has no model key of its own, whatever the role resolves to is what judges. Two caveats matter in practice:
 
-- **A non-chat (native judgment) model cannot produce verdicts.** Stage 1 is a chat prompt, but a native System One / TypeSafe judge model only answers typed-choice probes — a judge role that resolves to one returns no assistant text and the plugin fails closed (`judge produced no output`). As of OMP 18.3.0 the `judge` role resolves to **native candidates only**: once any credentialed `api: typesafe` provider exists (including a local decider), chat models drop out of the role's chain, so a plain `@judge` default lands on that wall on such hosts. Set `model` to a **chat-lane** entry instead — e.g. a second provider entry for the same local Decider server (`~/Documents/decider/decider_server.py` serves both lanes: `api: typesafe` for the host's built-in judgment and `api: openai-completions` for this plugin's chat prompts; base URL `http://127.0.0.1:8000`, model `decider-2b-mlx-4bit`). Its risk scores are uncalibrated: test representative commands before relying on unattended approvals.
+- **A non-chat (native judgment) model cannot produce verdicts.** Stage 1 is a chat prompt, but a native System One / TypeSafe judge model only answers typed-choice probes — a judge role that resolves to one returns no assistant text and the plugin fails closed (`judge produced no output`). As of OMP 18.3.0 the `judge` role resolves to **native candidates only**: once any credentialed `api: typesafe` provider exists (including a local decider), chat models drop out of the role's chain, so a plain `@judge` default lands on that wall on such hosts. Make the `judge` role resolve to a **chat-lane** entry instead (repoint it in `config.yml`, or add a chat-lane provider to `models.yml`) — e.g. a second provider entry for the same local Decider server (`~/Documents/decider/decider_server.py` serves both lanes: `api: typesafe` for the host's built-in judgment and `api: openai-completions` for this plugin's chat prompts; base URL `http://127.0.0.1:8000`, model `decider-2b-mlx-4bit`). Its risk scores are uncalibrated: test representative commands before relying on unattended approvals.
 - **The command text and conversation excerpts are model-facing input to both models.** The judge — and, under `fallback: "ask"`, the deep analyst — is a different model from the one that proposed the command, so self-deception is bounded; but both read the command and compact conversation context, and small models can be manipulated by instructions embedded in either. Both rubrics tell the models to treat that text as untrusted, and any verdict a model cannot express is a block. With `fallback: "ask"` this means a command the deep model *clears* is auto-approved **without a dialog** — a human only sees commands the deep model flags or cannot verdict. If you want no auto-execution of judge-flagged commands, use `fallback: "block"`; `blockRisk: "medium"` reduces how many commands are auto-approved at all.
 
 **Troubleshooting**
@@ -68,15 +69,26 @@ Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Every command blocked — "judge unavailable" | Host `omp` binary unresolved (see Host support) | Install `omp` on `PATH`, or run the session under the host it ships with |
-| Every command blocked — "no usable verdict" | The judge answered but its text was not a parseable verdict (a chat model not following the JSON contract) | Use a judge model that follows the rubric (e.g. `@smol`, `@tiny`, or the Decider chat lane) |
-| Every command blocked — "judge produced no output" | `model` resolves to a native System One / `api: typesafe` judge model, which cannot answer a chat prompt (OMP 18.3.0+ resolves the `judge` role to native candidates only — common right after a host update, or once a local decider registers a typesafe provider) | Point `model` at a chat-lane entry, e.g. a second provider entry for the same server with `api: openai-completions` |
-| Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or use a faster `model` |
-| A long command is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` |
+| Every command blocked — "judge unavailable (spawn)" | The judge child exited at startup — most often a `judge` role that resolves to nothing (renamed/removed provider, e.g. a stale `local-judge-chat/…`). The denial quotes the child's stderr (e.g. `Model "…" not found`), so the cause is visible in the tool result | Make the `judge` role resolve in the host's model config: a role alias in `~/.omp/agent/config.yml`, or a `provider/model` present in `~/.omp/agent/models.yml` |
+| Every command blocked — "no usable verdict" | The judge answered but its text was not a parseable verdict (a chat model not following the JSON contract) | Point the `judge` role at a model that follows the rubric (e.g. `@smol`, `@tiny`, or the Decider chat lane) |
+| Every command blocked — "judge produced no output" | The `judge` role resolves to a native System One / `api: typesafe` model, which cannot answer a chat prompt (OMP 18.3.0+ resolves the role to native candidates only — common right after a host update, or once a local decider registers a typesafe provider) | Make `judge` resolve to a chat-lane entry, e.g. a second provider entry for the same server with `api: openai-completions` (see Judge model) |
+| Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or point `judge` at a faster model |
+| A long command (including a multi-line script) is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` (see Script analysis) |
 | Every command blocked — provider error about context length | The judge model's context window is smaller than the full prompt (rubric + session context + command); small local models are prone to this | Lower `subjectMaxChars` and/or `contextMaxChars` until the prompt fits the model's window, or use a judge with a larger window; commands fail closed until then |
 
 ## Session context
 
 Both models also judge the command's *scope*: compact excerpts of the conversation — the original user task, the latest user request, and the agent's newest plan text — so a verdict reflects why the command runs, not just what it does. The excerpts are credential-redacted, capped at `contextMaxChars` characters total (messages dropped by the budget are reported inside the prompt), and fenced as untrusted data with an explicit instruction not to follow anything inside them. The latest user excerpt is contextual intent, never a new authorization: a mid-conversation message cannot expand what the risk rubric permits. Set `contextMaxChars: 0` for command-only judgements (useful with small-window judge models).
+
+## Script analysis
+
+Newer models (e.g. GPT-6-Sol) often run multi-step work through shell scripts rather than single one-liners — either a multi-line script inside the `command` string, or a script file it wrote earlier (`bash run.sh`, `python script.py`). Judging only the invocation line makes every such call look like "runs unreviewed code", so the prompts handle both shapes:
+
+- **Inline scripts:** both rubrics tell the models the command may be a multi-line shell script and that every statement it would execute — functions, loops, conditionals, command substitutions, heredocs — counts as the command's action.
+- **Referenced script files:** the gate extracts script-path tokens from the command (`.sh`, `.bash`, `.zsh`, `.ksh`, `.fish`, `.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.rb`, `.pl`, `.php`, `.lua`, `.ps1`), resolves them against the execution working directory, and feeds up to three files' contents (each capped at `scriptMaxChars`) into both prompts, fenced as untrusted data. Paths containing spaces (even when quoted) are not detected. Files that cannot be read are reported in the prompt as `missing`, `unreadable`, `binary`, or `too large`, so the judge knows a missing body is not a missing risk. Fetch URLs are ignored (a remote target is not a file to read). Set `scriptMaxChars: 0` to disable file reads and fall back to judging the invocation line only.
+
+Long inline scripts still obey `subjectMaxChars`: a script longer than the assessment window is never auto-approved (blocks as "too long", or reaches the dialog under `fallback: "ask"`). If your model habitually writes long scripts and you trust the judge to read them, raise `subjectMaxChars` accordingly.
+
 ## Headless sessions
 
 Headless sessions (subagents, no UI) run the same two-stage judge — the RPC child needs no UI — but `fallback: "ask"` degrades to `block`: no dialog is ever shown and the deep-analysis model is never launched. Blocked commands simply do not execute, and the denial text tells the model why — judge declined, the risk rating, or judge unavailable (fail-closed) — plus an explicit note that no confirmation dialog was shown, so a headless denial is never mistaken for a user decision. Low-risk verdicts are auto-approved and execute headlessly.
@@ -89,7 +101,7 @@ Switch at runtime from the TUI (or RPC client) — no restart needed; changes pe
 /auto-approve              # toggle enabled (also shows current settings when enabled)
 /auto-approve on           # enable
 /auto-approve off          # disable (pass-through to native bash)
-/auto-approve status       # show enabled state, model, display, block risk
+/auto-approve status       # show enabled state, display, block risk, fallback
 /auto-approve display             # show the current display mode
 /auto-approve display off       # silent approvals (marker + toast hidden)
 /auto-approve display marker    # marker line inside the tool call only
@@ -114,12 +126,11 @@ File: `~/.omp/agent/auto-approve.json` (created on first write-back). Runtime sw
 | `display` | `both` | yes | yes | `off` \| `marker` \| `both` — where approval markers appear; blocked verdicts are always visible |
 | `blockRisk` | `high` | yes | yes | `medium` \| `high` — minimum judge risk level that blocks |
 | `fallback` | `block` | yes | yes | `block` \| `ask` — policy when the risk threshold is crossed; `ask` runs a deep-analysis model over commands the first-pass judge flagged, auto-approving a cleared one or opening a dialog for a risky one (degrades to `block` without a UI; a judge that never verdicts always blocks, never consulting the deep model) |
-| `model` | `@judge` | — | — | Judge model for stage-1 verdicts (file-only). The host resolves roles and `provider/model` specs — whatever it lands on must be a **chat-lane** model; a native System One / `api: typesafe` judge model cannot answer a chat prompt (see Troubleshooting) |
-| `deepModel` | `@tiny` | — | — | Deep-analysis model for stage 2; `@smol` is tried automatically when it is unavailable (file-only) |
 | `timeoutMs` | `30000` | — | — | Per-attempt timeout for judge and deep-analysis prompts (`0` = none) |
 | `idleMs` | `600000` | — | — | Both RPC children are reaped after this idle period and respawn lazily |
 | `subjectMaxChars` | `4000` | — | — | Command length sent to the prompts; a command longer than this is **never auto-approved** (the judge only sees the first N characters, so the full command would run unassessed) — it blocks, or escalates to the user dialog with `fallback: "ask"` |
 | `contextMaxChars` | `3000` | — | — | Session-context budget: characters of conversation excerpts (original task, latest request, recent plan text) the models see as the judgement's scope; `0` = command-only judgement (file-only) |
+| `scriptMaxChars` | `4000` | — | — | Per-file budget for script analysis: characters of each referenced script file's contents sent to the prompts, so the models judge what a script the command runs actually does; `0` = no script files read (file-only) |
 
 The four slash-switchable keys (`enabled`, `display`, `blockRisk`, `fallback`) are also exposed through the host Settings UI (`omp.settings` in `package.json`) and `omp plugin config get|set`; a parity test keeps the schema in sync with the slash surface.
 
@@ -139,8 +150,9 @@ AutoApprove (orchestrator — registers tool, command, shutdown hook)
  │                    protocol, per-assessment session reset, abort forwarding,
  │                    model-switch respawn, idle reaping
  └─ BashGate        — shadows the built-in `bash` tool; decision pipeline;
-                      execution is delegated via ctx.invokeTool, never run
-                      by the extension itself
+                      reads referenced script files into the prompts (script
+                      analysis); execution is delegated via ctx.invokeTool,
+                      never run by the extension itself
 ```
 
 Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + working directory + session-context + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/logs/auto-approve.log`): identifiers and verdicts only — never the raw command.

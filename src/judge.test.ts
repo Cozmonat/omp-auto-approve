@@ -15,7 +15,7 @@ import {
   buildDeepPrompt,
   buildJudgeArgs,
   buildJudgePrompt,
-  deepModelCandidates,
+  DEEP_MODELS,
   JUDGE_CONFIG_OVERLAY,
   JUDGE_DEEP_SYSTEM_PROMPT,
   JUDGE_SYSTEM_PROMPT,
@@ -163,6 +163,20 @@ describe("buildJudgePrompt", () => {
     expect(prompt.indexOf("CONTEXT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
     expect(buildJudgePrompt("ls", 4000, "/work")).not.toContain("CONTEXT_SECTION");
   });
+
+  test("inserts the script-contents section before the command, omits it otherwise", () => {
+    const prompt = buildJudgePrompt("bash run.sh", 4000, "/work", undefined, "SCRIPT_SECTION");
+    expect(prompt).toContain("SCRIPT_SECTION");
+    expect(prompt.indexOf("SCRIPT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
+    expect(buildJudgePrompt("bash run.sh", 4000, "/work")).not.toContain("SCRIPT_SECTION");
+  });
+
+  test("rubric tells the judge to analyse multi-line scripts and provided script contents", () => {
+    const prompt = buildJudgePrompt("ls");
+    expect(prompt).toMatch(/multi-line shell script/i);
+    expect(prompt).toMatch(/script file/i);
+  });
+
 });
 
 describe("outcomeFromPrompt", () => {
@@ -229,6 +243,18 @@ describe("JudgeInvoker lifecycle", () => {
     const outcome = await invoker.assess("@judge", "p", { timeoutMs: 500 });
     expect(outcome.kind).toBe("error");
     if (outcome.kind === "error") expect(outcome.category).toBe("spawn");
+  });
+
+  test("child exiting before ready carries its stderr in the failure reason", async () => {
+    const { factory } = fakeChildFactory([{ dead: true, deadStderr: 'Model "nope/none" not found\n' }], { dead: true });
+    const invoker = makeInvoker(factory, { idleMs: 0 });
+    disposed.push(invoker);
+    const outcome = await invoker.assess("@judge", "p", { timeoutMs: 500 });
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind === "error") {
+      expect(outcome.category).toBe("spawn");
+      expect(outcome.reason).toContain('Model "nope/none" not found');
+    }
   });
 
   test("missing new_session ack fails closed to a timeout error", async () => {
@@ -432,6 +458,19 @@ describe("deep analysis", () => {
     expect(buildDeepPrompt("ls", 4000, "/scratch")).not.toContain("CONTEXT_SECTION");
   });
 
+  test("inserts the script-contents section before the command, omits it otherwise", () => {
+    const prompt = buildDeepPrompt("bash run.sh", 4000, "/scratch", undefined, "SCRIPT_SECTION");
+    expect(prompt).toContain("SCRIPT_SECTION");
+    expect(prompt.indexOf("SCRIPT_SECTION")).toBeLessThan(prompt.indexOf("Command to analyze:"));
+    expect(buildDeepPrompt("bash run.sh", 4000, "/scratch")).not.toContain("SCRIPT_SECTION");
+  });
+
+  test("rubric tells the analyst to analyse multi-line scripts and provided script contents", () => {
+    const prompt = buildDeepPrompt("ls");
+    expect(prompt).toMatch(/multi-line shell script/i);
+    expect(prompt).toMatch(/script file/i);
+  });
+
   test("buildJudgeArgs accepts a system-prompt override for the deep child", () => {
     const args = buildJudgeArgs("@tiny", "/tmp/overlay.yml", { systemPrompt: JUDGE_DEEP_SYSTEM_PROMPT });
     expect(args).toContain(`--system-prompt=${JUDGE_DEEP_SYSTEM_PROMPT}`);
@@ -440,19 +479,14 @@ describe("deep analysis", () => {
     expect(buildJudgeArgs("@judge", "/tmp/overlay.yml")).toContain(`--system-prompt=${JUDGE_SYSTEM_PROMPT}`);
   });
 
-  test("deepModelCandidates lists the configured model then @smol", () => {
-    expect(deepModelCandidates("@tiny")).toEqual(["@tiny", "@smol"]);
-    expect(deepModelCandidates("local/lfm2-1.2b")).toEqual(["local/lfm2-1.2b", "@smol"]);
-    // @smol is its own fallback: no duplicate entry.
-    expect(deepModelCandidates("@smol")).toEqual(["@smol"]);
-    // Blank falls back to the default deep model.
-    expect(deepModelCandidates("  ")).toEqual(["@tiny", "@smol"]);
+  test("DEEP_MODELS is the fixed host-role chain (@tiny, then @smol)", () => {
+    expect(DEEP_MODELS).toEqual(["@tiny", "@smol"]);
   });
 
-  test("runDeepAnalysis uses the configured deep model when it answers", async () => {
+  test("runDeepAnalysis uses the @tiny role when it answers", async () => {
     const factory = (model: string) => new FakeRpcChild({ replyText: `Deep analysis for ${model}` });
     const invoker = makeInvoker(factory);
-    const out = await runDeepAnalysis(invoker, "@tiny", "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
+    const out = await runDeepAnalysis(invoker, "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
     expect(out).toEqual({ text: "Deep analysis for @tiny", model: "@tiny", verdict: null });
     await invoker.dispose();
   });
@@ -461,7 +495,7 @@ describe("deep analysis", () => {
     const reply = '{"risk":"low","recommend":"allow","summary":"reads a file"}';
     const factory = () => new FakeRpcChild({ replyText: reply });
     const invoker = makeInvoker(factory);
-    const out = await runDeepAnalysis(invoker, "@tiny", "cat foo", { timeoutMs: 5000 }, quietLogger);
+    const out = await runDeepAnalysis(invoker, "cat foo", { timeoutMs: 5000 }, quietLogger);
     expect(out).toEqual({
       text: reply,
       model: "@tiny",
@@ -470,11 +504,11 @@ describe("deep analysis", () => {
     await invoker.dispose();
   });
 
-  test("runDeepAnalysis falls back to @smol when the deep model is unavailable", async () => {
+  test("runDeepAnalysis falls back to @smol when @tiny is unavailable", async () => {
     const factory = (model: string) =>
       model === "@tiny" ? new FakeRpcChild({ dead: true }) : new FakeRpcChild({ replyText: "smol says: risky" });
     const invoker = makeInvoker(factory);
-    const out = await runDeepAnalysis(invoker, "@tiny", "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
+    const out = await runDeepAnalysis(invoker, "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
     expect(out).toEqual({ text: "smol says: risky", model: "@smol", verdict: null });
     await invoker.dispose();
   });
@@ -482,7 +516,7 @@ describe("deep analysis", () => {
   test("runDeepAnalysis returns null when no candidate answers", async () => {
     const factory = () => new FakeRpcChild({ dead: true });
     const invoker = makeInvoker(factory);
-    const out = await runDeepAnalysis(invoker, "@tiny", "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
+    const out = await runDeepAnalysis(invoker, "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
     expect(out).toBeNull();
     await invoker.dispose();
   });

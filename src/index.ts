@@ -119,7 +119,7 @@ export function createAutoApproveCompletionProvider(
 /** The current settings as one localized line for the status command. */
 function statusText(modeManager: ModeManager, t: I18n): string {
   if (!modeManager.isEnabled()) return t.format("statusDisabled");
-  return t.format("statusEnabled", modeManager.getModel(), modeManager.getDisplay(), modeManager.getBlockRisk());
+  return t.format("statusEnabled", modeManager.getDisplay(), modeManager.getBlockRisk(), modeManager.getFallback());
 }
 
 /** Register the /auto-approve slash command. */

@@ -33,14 +33,6 @@ export interface AutoApproveConfig {
    *  (degrades to "block" in no-UI/headless contexts); "block" denies
    *  without asking (fail-closed default). */
   fallback: FallbackMode;
-  /** Judge model spec for the one-shot risk assessment. Accepts any string
-   *  the omp --model flag accepts: role alias (@judge / @tiny / @smol),
-   *  provider/id, or bare id. Default @judge. */
-  model: string;
-  /** Deep-analysis model for the prose summary shown when the risk
-   *  threshold is crossed. If it cannot run, "@smol" is tried instead.
-   *  Config-file only. */
-  deepModel: string;
   /** Per-assessment window in ms. 0 = no timeout. Default 30s. */
   timeoutMs: number;
   /** Idle lifetime of the persistent judge child, in ms.
@@ -54,6 +46,11 @@ export interface AutoApproveConfig {
    *  text) the models see as background for WHY the command runs.
    *  0 = command-only judgement (no conversation context).  Default 3000. */
   contextMaxChars: number;
+  /** Budget for script analysis: max characters of each referenced script
+   *  file's contents sent to the judge prompts, so the models judge what
+   *  a script the command runs actually does. 0 = no script files read.
+   *  Default 4000. */
+  scriptMaxChars: number;
 }
 
 export const DEFAULT_CONFIG: AutoApproveConfig = {
@@ -61,12 +58,11 @@ export const DEFAULT_CONFIG: AutoApproveConfig = {
   display: "both",
   blockRisk: "high",
   fallback: "block",
-  deepModel: "@tiny",
-  model: "@judge",
   timeoutMs: 30_000,
   idleMs: 600_000,
   subjectMaxChars: 4_000,
   contextMaxChars: 3_000,
+  scriptMaxChars: 4_000,
 };
 
 /** Merge user config over defaults; every key falls back to its default
@@ -83,9 +79,6 @@ export function mergeConfig(user: unknown): AutoApproveConfig {
         : DEFAULT_CONFIG.display,
     blockRisk: u.blockRisk === "medium" ? "medium" : DEFAULT_CONFIG.blockRisk,
     fallback: u.fallback === "ask" || u.fallback === "block" ? u.fallback : DEFAULT_CONFIG.fallback,
-    model: typeof u.model === "string" && u.model.trim() ? u.model.trim() : DEFAULT_CONFIG.model,
-    deepModel:
-      typeof u.deepModel === "string" && u.deepModel.trim() ? u.deepModel.trim() : DEFAULT_CONFIG.deepModel,
     timeoutMs: typeof u.timeoutMs === "number" && u.timeoutMs >= 0 ? u.timeoutMs : DEFAULT_CONFIG.timeoutMs,
     idleMs: typeof u.idleMs === "number" && u.idleMs >= 0 ? u.idleMs : DEFAULT_CONFIG.idleMs,
     subjectMaxChars:
@@ -96,6 +89,10 @@ export function mergeConfig(user: unknown): AutoApproveConfig {
       typeof u.contextMaxChars === "number" && u.contextMaxChars >= 0
         ? u.contextMaxChars
         : DEFAULT_CONFIG.contextMaxChars,
+    scriptMaxChars:
+      typeof u.scriptMaxChars === "number" && u.scriptMaxChars >= 0
+        ? u.scriptMaxChars
+        : DEFAULT_CONFIG.scriptMaxChars,
   };
 }
 

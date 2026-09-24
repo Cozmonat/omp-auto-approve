@@ -44,11 +44,11 @@ describe("defaults", () => {
     expect(DEFAULT_CONFIG.enabled).toBe(true);
     expect(DEFAULT_CONFIG.display).toBe("both");
     expect(DEFAULT_CONFIG.blockRisk).toBe("high");
-    expect(DEFAULT_CONFIG.model).toBe("@judge");
     expect(DEFAULT_CONFIG.timeoutMs).toBe(30_000);
     expect(DEFAULT_CONFIG.idleMs).toBe(600_000);
     expect(DEFAULT_CONFIG.subjectMaxChars).toBe(4_000);
     expect(DEFAULT_CONFIG.contextMaxChars).toBe(3_000);
+    expect(DEFAULT_CONFIG.scriptMaxChars).toBe(4_000);
   });
 });
 
@@ -58,12 +58,12 @@ describe("file parsing", () => {
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ display: "marker", blockRisk: "medium", model: "local/lfm2-1.2b" }),
+        JSON.stringify({ display: "marker", blockRisk: "medium", timeoutMs: 1200 }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       expect(store.config.display).toBe("marker");
       expect(store.config.blockRisk).toBe("medium");
-      expect(store.config.model).toBe("local/lfm2-1.2b");
+      expect(store.config.timeoutMs).toBe(1200);
     } finally {
       env.cleanup();
     }
@@ -74,12 +74,12 @@ describe("file parsing", () => {
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ display: "verbose", blockRisk: "critical", model: "  " }),
+        JSON.stringify({ display: "verbose", blockRisk: "critical", timeoutMs: -5 }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       expect(store.config.display).toBe("both");
       expect(store.config.blockRisk).toBe("high");
-      expect(store.config.model).toBe("@judge");
+      expect(store.config.timeoutMs).toBe(DEFAULT_CONFIG.timeoutMs);
     } finally {
       env.cleanup();
     }
@@ -122,6 +122,32 @@ describe("file parsing", () => {
       );
       const custom = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       expect(custom.config.contextMaxChars).toBe(500);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  test("scriptMaxChars=0 loads (script analysis disabled); malformed values keep the default", () => {
+    const env = isolatedHome();
+    try {
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ scriptMaxChars: 0 }),
+      );
+      const off = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(off.config.scriptMaxChars).toBe(0);
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ scriptMaxChars: -100 }),
+      );
+      const negative = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(negative.config.scriptMaxChars).toBe(DEFAULT_CONFIG.scriptMaxChars);
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ scriptMaxChars: 8000 }),
+      );
+      const custom = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(custom.config.scriptMaxChars).toBe(8000);
     } finally {
       env.cleanup();
     }
@@ -222,7 +248,7 @@ describe("selective persist", () => {
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ model: "local/lfm2-1.2b", display: "marker", blockRisk: "high" }),
+        JSON.stringify({ subjectMaxChars: 1200, display: "marker", blockRisk: "high" }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       store.update({ display: "off" });
@@ -230,7 +256,7 @@ describe("selective persist", () => {
 
       const onDisk = JSON.parse(fs.readFileSync(path.join(env.agent, "auto-approve.json"), "utf-8"));
       expect(onDisk.display).toBe("off");
-      expect(onDisk.model).toBe("local/lfm2-1.2b"); // untouched user key preserved
+      expect(onDisk.subjectMaxChars).toBe(1200); // untouched user key preserved
       expect(onDisk.blockRisk).toBe("high"); // untouched enum key preserved
       expect(store.config.display).toBe("off");
     } finally {
@@ -242,7 +268,7 @@ describe("selective persist", () => {
     const env = isolatedHome();
     try {
       const file = path.join(env.agent, "auto-approve.json");
-      const original = JSON.stringify({ model: "x" }, null, 2);
+      const original = JSON.stringify({ timeoutMs: 123 }, null, 2);
       fs.writeFileSync(file, original);
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       store.persist();
@@ -256,13 +282,13 @@ describe("selective persist", () => {
     const env = isolatedHome();
     try {
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
-      store.update({ model: "@smol" }); // not persistable
-      expect(store.config.model).toBe("@judge"); // non-persistable keys are not applied at runtime
+      store.update({ timeoutMs: 1234 }); // not persistable
+      expect(store.config.timeoutMs).toBe(DEFAULT_CONFIG.timeoutMs); // non-persistable keys are not applied at runtime
       store.update({ enabled: false });
       store.persist();
       const onDisk = JSON.parse(fs.readFileSync(path.join(env.agent, "auto-approve.json"), "utf-8"));
       expect(onDisk.enabled).toBe(false);
-      expect(onDisk.model, "file keeps its value when the runtime-only write is ignored").toBeUndefined();
+      expect(onDisk.timeoutMs, "file keeps its value when the runtime-only write is ignored").toBeUndefined();
     } finally {
       env.cleanup();
     }

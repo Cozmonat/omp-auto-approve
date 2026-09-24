@@ -24,11 +24,6 @@ export class ModeManager {
     this.configStore.persist();
   }
 
-  /** Judge model spec shown in the status line. */
-  getModel(): string {
-    return this.configStore.config.model;
-  }
-
   getFallback(): FallbackMode {
     return this.configStore.config.fallback;
   }

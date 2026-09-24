@@ -154,7 +154,7 @@ describe("/auto-approve handler", () => {
     expect(modeManager.isEnabled()).toBe(false);
   });
 
-  test("status reflects enabled state with model, display, and risk", async () => {
+  test("status reflects enabled state with display, risk, and fallback", async () => {
     const modeManager = makeModeManager(tmpDir());
     const { pi, command } = makeCommandPi();
     registerAutoApproveCommand(pi, modeManager, t);
@@ -163,7 +163,7 @@ describe("/auto-approve handler", () => {
     let { ctx, messages } = makeCommandCtx();
     await runCommand(modeManager, cmd.handler, "status", ctx);
     expect(messages).toEqual([
-      "auto-approve: ON (model @judge, display both, blocks risk high and above)",
+      "auto-approve: ON (display both, blocks risk high and above, fallback block)",
     ]);
 
     modeManager.setEnabled(false);

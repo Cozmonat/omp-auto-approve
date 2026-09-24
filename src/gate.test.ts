@@ -391,6 +391,127 @@ describe("BashGate", () => {
   });
 });
 
+describe("BashGate script analysis", () => {
+  /** A temp directory with the referenced script files. */
+  function makeScriptDir(files: Record<string, string>): { dir: string; cleanup: () => void } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "auto-approve-script-"));
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, name), body);
+    }
+    return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  test("judge and deep prompts carry the referenced script's contents", async () => {
+    const { dir, cleanup } = makeScriptDir({ "run.sh": "echo hello from script\n" });
+    try {
+      const prompts: string[] = [];
+      const capturing = (replyText: string) =>
+        new FakeRpcChild({
+          replyText,
+          onFrame: (f) => {
+            if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+          },
+        });
+      const judge = capturing(highVerdict); // flagged -> forces the deep pass
+      const deep = capturing('{"risk":"low","recommend":"allow","summary":"script is harmless"}');
+      const rig = makeRig(() => judge, [judge], { fallback: "ask" }, () => deep);
+      const { ctx, calls } = makeCtx({ cwd: dir });
+      const result = await rig.gate.execute({ command: "bash run.sh" }, undefined, undefined, ctx);
+      expect(result.isError ?? false).toBe(false);
+      expect(calls).toHaveLength(1);
+      expect(prompts).toHaveLength(2); // judge and deep both prompted
+      for (const prompt of prompts) {
+        expect(prompt).toContain("=== run.sh ===");
+        expect(prompt).toContain("echo hello from script");
+        expect(prompt).toMatch(/untrusted/i);
+      }
+      await rig.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("prompts report a missing referenced script instead of silently omitting it", async () => {
+    const { dir, cleanup } = makeScriptDir({});
+    try {
+      const prompts: string[] = [];
+      const { factory, children } = fakeChildFactory(
+        [
+          {
+            replyText: lowVerdict,
+            onFrame: (f) => {
+              if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+            },
+          },
+        ],
+        {},
+      );
+      const rig = makeRig(factory, children);
+      const { ctx, calls } = makeCtx({ cwd: dir });
+      const result = await rig.gate.execute({ command: "bash nosuch.sh" }, undefined, undefined, ctx);
+      expect(result.isError ?? false).toBe(false);
+      expect(calls).toHaveLength(1);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("[content unavailable: missing]");
+      await rig.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("commands without a script reference carry no script section", async () => {
+    const prompts: string[] = [];
+    const { factory, children } = fakeChildFactory(
+      [
+        {
+          replyText: lowVerdict,
+          onFrame: (f) => {
+            if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+          },
+        },
+      ],
+      {},
+    );
+    const rig = makeRig(factory, children);
+    const { ctx } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
+    expect(result.isError ?? false).toBe(false);
+    expect(prompts).toHaveLength(1);
+    // The section header is the stable marker of script analysis in the prompt.
+    expect(prompts[0]).not.toContain("references script files");
+    await rig.dispose();
+  });
+
+  test("scriptMaxChars=0 disables script-file reads", async () => {
+    const { dir, cleanup } = makeScriptDir({ "run.sh": "echo secret-script-body\n" });
+    try {
+      const prompts: string[] = [];
+      const { factory, children } = fakeChildFactory(
+        [
+          {
+            replyText: lowVerdict,
+            onFrame: (f) => {
+              if (f.type === "prompt" && typeof f.message === "string") prompts.push(f.message);
+            },
+          },
+        ],
+        {},
+      );
+      const rig = makeRig(factory, children);
+      rig.store.config.scriptMaxChars = 0;
+      const { ctx } = makeCtx({ cwd: dir });
+      const result = await rig.gate.execute({ command: "bash run.sh" }, undefined, undefined, ctx);
+      expect(result.isError ?? false).toBe(false);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).not.toContain("references script files");
+      expect(prompts[0]).not.toContain("secret-script-body");
+      await rig.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("BashGate fallback escalation", () => {
   /** Verdict that is high risk but does not itself carry a deny recommendation. */
   const highRiskOnly = '{"risk":"high"}';
@@ -580,6 +701,24 @@ describe("BashGate fallback escalation", () => {
     expect(rig.deepChildren).toHaveLength(0); // deep model never consulted
     expect(dialogs).toHaveLength(0);
     expect(result.content[0].text).toContain("could not be consulted");
+    await rig.dispose();
+  });
+
+  test("fallback=ask + UI: a judge child that exits before ready surfaces the child stderr in the denial", async () => {
+    const { factory, children } = fakeChildFactory(
+      [{ dead: true, deadStderr: 'Model "local-judge-chat/decider" not found' }],
+      { dead: true },
+    );
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"cleared"}' });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_t, choices) => choices[0] });
+    const result = await rig.gate.execute({ command: "git status" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(rig.deepChildren).toHaveLength(0); // still fail closed; deep model never consulted
+    expect(dialogs).toHaveLength(0);
+    expect(result.content[0].text).toContain("could not be consulted");
+    expect(result.content[0].text).toContain('Model "local-judge-chat/decider" not found');
     await rig.dispose();
   });
 

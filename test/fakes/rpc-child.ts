@@ -56,6 +56,8 @@ export interface FakeRpcChildOptions {
   readyDelayMs?: number;
   /** Child dies before ready (exits 1; ready frame never arrives). */
   dead?: boolean;
+  /** Written to stderr before the dead child exits (spawn-failure diagnostics). */
+  deadStderr?: string;
   /** Default true: new_session requests are answered with a matching-id ack. */
   ackNewSession?: boolean;
   /** Delay (ms) before the new_session ack is emitted (late-ack tests). */
@@ -141,6 +143,7 @@ export class FakeRpcChild {
     });
 
     if (options.dead === true) {
+      if (options.deadStderr) this.stderr.write(options.deadStderr);
       // Defer so the invoker's exit listener (registered after the factory
       // returns) is attached before the event fires.
       queueMicrotask(() => this.exit(1, null));

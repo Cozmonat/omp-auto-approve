@@ -20,10 +20,12 @@
  */
 import {
   buildJudgePrompt,
+  JUDGE_MODEL,
   runDeepAnalysis,
   type JudgeInvoker,
 } from "./judge";
 import { SessionContextGatherer } from "./context";
+import { collectScriptContents, formatScriptSection } from "./scripts";
 import { displaySurfaces } from "./config";
 import type { AutoApproveConfig, ConfigStore } from "./config";
 import type { I18n } from "./i18n";
@@ -167,11 +169,14 @@ export class BashGate {
     // WHY the command runs, not just what it does. "" when there is no
     // session history or the budget is 0 (command-only judgement).
     const contextSection = this.deps.contextGatherer.section(ctx, cfg.contextMaxChars);
+    // Referenced script files are read so both models judge what the command
+    // actually executes; multi-line inline scripts are covered by the rubric.
+    const scriptSection = this.scriptSection(command, execCwd, cfg);
     let outcome: JudgeOutcome;
     try {
       outcome = await invoker.assess(
-        cfg.model,
-        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd, contextSection),
+        JUDGE_MODEL,
+        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd, contextSection, scriptSection),
         { timeoutMs: cfg.timeoutMs, signal },
       );
     } catch (e) {
@@ -236,9 +241,8 @@ export class BashGate {
       const { deepInvoker } = this.deps;
       const deep = await runDeepAnalysis(
         deepInvoker,
-        cfg.deepModel,
         command,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, timeoutMs: cfg.timeoutMs, signal },
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal },
         logger,
       );
       if (signal?.aborted) {
@@ -383,7 +387,15 @@ export class BashGate {
           : t.format("deniedJudgeSilent", outcome.reason);
     } else {
       const category = outcome.kind === "error" ? outcome.category : "unavailable";
-      text = t.format("deniedJudgeUnavailable", category);
+      // Surface the classified failure detail (e.g.
+      // 'spawn: judge process exited before ready (code 1): Model "x" not
+      // found') so a broken model spec is self-diagnosing instead of an
+      // opaque category.
+      const detail =
+        outcome.kind === "error" && outcome.reason
+          ? `${category}: ${outcome.reason}`
+          : category;
+      text = t.format("deniedJudgeUnavailable", detail);
     }
     return hasUI ? text : text + t.format("headlessNote");
   }
@@ -402,6 +414,17 @@ export class BashGate {
     const p = params as { cwd?: unknown } | null;
     const cwd = p && typeof p.cwd === "string" ? p.cwd : "";
     return cwd.trim() ? cwd : sessionCwd;
+  }
+
+  /** Build the referenced-script contents section for the prompts.  The
+   *  per-file budget comes from config (0 disables file reads); failures
+   *  degrade to per-file notes, never to a tool-call crash. */
+  private scriptSection(command: string, cwd: string | undefined, cfg: AutoApproveConfig): string {
+    const contents = collectScriptContents(command, { cwd, maxChars: cfg.scriptMaxChars, logger: this.deps.logger });
+    if (contents.length > 0) {
+      this.deps.logger.log(`bash: script analysis: ${contents.length} referenced file(s) sent to the prompts`);
+    }
+    return formatScriptSection(contents);
   }
 
   /** Run the native tool with the original params. */

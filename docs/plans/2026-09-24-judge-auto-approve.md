@@ -343,3 +343,27 @@ adversarial review of the shipped code:
 Verified: `bun test src` green, `bun run typecheck` clean,
 `bun run build` emits `dist/index.js`; live contract proven with a real
 `omp --mode rpc` child (allow / deny / non-chat-judge empty-verdict paths).
+
+## 10. Post-1.2.3 deltas (2026-09-24, v1.2.4)
+
+Two changes after the 1.2.3 release, both user-requested:
+
+- **Script analysis** (`src/scripts.ts`, new `scriptMaxChars` key,
+  default 4000): both rubrics now state that a multi-line shell command
+  counts as the full script it would execute, and the gate extracts
+  script-path tokens from the command (`.sh/.bash/.zsh/.ksh/.fish/.py/.js/
+  .mjs/.cjs/.ts/.mts/.cts/.rb/.pl/.php/.lua/.ps1`, up to three files,
+  each capped at `scriptMaxChars`), resolves them against the execution
+  cwd, and feeds the contents into both prompts fenced as untrusted data.
+  The section header notes the snapshot is taken before execution.
+  `scriptMaxChars: 0` disables file reads (file-only).
+- **Model roles fixed to the host**: the `model` and `deepModel` config
+  keys are removed (user decision). Stage 1 always uses the `@judge` role
+  and stage 2 always uses the fixed `@tiny` → `@smol` chain, both
+  resolved from the main OMP model config (`models.yml` / `config.yml`).
+  The status line and denial texts now point at the OMP-config `judge`
+  role instead of the plugin's own `model` setting. Existing
+  `auto-approve.json` files keep unknown keys on disk (preserved, ignored).
+
+Verified: `bun test src` green (192 tests), `bun run typecheck` clean,
+`bun run build` emits `dist/index.js`.
