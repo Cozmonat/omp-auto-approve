@@ -72,10 +72,17 @@ function riskLabel(t: I18n, risk: JudgeVerdict["risk"] | undefined): string {
 /** Localized human reason for a blocked verdict. */
 function blockReasonText(
   t: I18n,
-  decisionReason: "ai-risk" | "ai-recommend" | "fallback",
+  decisionReason: "ai-risk" | "ai-recommend" | "fallback" | "truncated",
   verdict: JudgeVerdict | null,
+  outcome: JudgeOutcome,
 ): string {
-  if (decisionReason === "fallback") return t.format("reasonFallback");
+  if (decisionReason === "truncated") return t.format("reasonTruncated");
+  if (decisionReason === "fallback") {
+    // Empty means the judge answered but produced no usable verdict —
+    // saying "unavailable" would mislead the model (and the user) about
+    // why the block happened.
+    return outcome.kind === "empty" ? t.format("reasonNoVerdict") : t.format("reasonFallback");
+  }
   if (decisionReason === "ai-recommend") return t.format("reasonDeny");
   return verdict?.risk === "high" ? t.format("reasonHighRisk") : t.format("reasonMediumRisk");
 }
@@ -142,7 +149,7 @@ export class BashGate {
     try {
       outcome = await invoker.assess(
         cfg.model,
-        buildJudgePrompt(command, cfg.subjectMaxChars),
+        buildJudgePrompt(command, cfg.subjectMaxChars, ctx.cwd),
         { timeoutMs: cfg.timeoutMs, signal },
       );
     } catch (e) {
@@ -167,7 +174,16 @@ export class BashGate {
     }
 
     const verdict = outcome.kind === "verdict" ? outcome.verdict : null;
-    const decision = decide(verdict, cfg.blockRisk);
+    let decision = decide(verdict, cfg.blockRisk);
+    // The judge only ever sees the first subjectMaxChars of the command. A
+    // command longer than that window may hide a payload past the judged
+    // prefix, so no "allow" verdict can authorize it: over-budget commands
+    // block as "truncated" (or escalate to the user dialog when
+    // fallback=ask and a UI is available).
+    if (decision.verdict === "allow" && command.length > cfg.subjectMaxChars) {
+      decision = { verdict: "block", reason: "truncated" };
+      logger.log(`bash: command exceeds assessment window (${command.length} > ${cfg.subjectMaxChars}), overriding allow verdict`);
+    }
     logger.log(`bash: decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
     if (decision.verdict === "allow") {
@@ -195,7 +211,7 @@ export class BashGate {
         deepInvoker,
         cfg.deepModel,
         command,
-        { subjectMaxChars: cfg.subjectMaxChars, timeoutMs: cfg.timeoutMs, signal },
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: ctx.cwd, timeoutMs: cfg.timeoutMs, signal },
         logger,
       );
       if (signal?.aborted) {
@@ -233,8 +249,8 @@ export class BashGate {
         ...(deep ? { analysis: deep.text, deepModel: deep.model } : {}),
       });
     }
-    const reasonText = blockReasonText(t, decision.reason, verdict);
-    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI);
+    const reasonText = blockReasonText(t, decision.reason, verdict, outcome);
+    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, command.length, cfg.subjectMaxChars);
     if (surfaces.marker) {
       onUpdate?.({ content: [{ type: "text", text: t.format("markerBlocked", reasonText) }] });
     }
@@ -249,6 +265,9 @@ export class BashGate {
       ...(verdict?.risk ? { risk: verdict.risk } : {}),
       ...(verdict?.summary ? { finding: verdict.summary } : {}),
       ...(outcome.kind === "error" ? { category: outcome.category } : {}),
+      ...(decision.reason === "truncated"
+        ? { length: command.length, subjectMaxChars: cfg.subjectMaxChars }
+        : {}),
     });
   }
 
@@ -283,10 +302,12 @@ export class BashGate {
    *  model never mistakes a fail-closed block for a user decision. */
   private denialText(
     t: I18n,
-    decisionReason: "ai-risk" | "ai-recommend" | "fallback",
+    decisionReason: "ai-risk" | "ai-recommend" | "fallback" | "truncated",
     verdict: JudgeVerdict | null,
     outcome: JudgeOutcome,
     hasUI: boolean,
+    commandLength?: number,
+    subjectMaxChars?: number,
   ): string {
     let text: string;
     if (decisionReason === "ai-recommend") {
@@ -297,8 +318,14 @@ export class BashGate {
         riskLabel(t, verdict?.risk),
         verdict?.summary ? `: ${verdict.summary}` : "",
       );
+    } else if (decisionReason === "truncated") {
+      text = t.format("deniedTooLong", String(commandLength ?? ""), String(subjectMaxChars ?? ""));
+    } else if (outcome.kind === "empty") {
+      // The judge responded but produced no usable verdict — distinct from
+      // "could not be consulted": retrying helps, re-asking does not.
+      text = t.format("deniedNoVerdict");
     } else {
-      const category = outcome.kind === "error" ? outcome.category : "unknown";
+      const category = outcome.kind === "error" ? outcome.category : "unavailable";
       text = t.format("deniedJudgeUnavailable", category);
     }
     return hasUI ? text : text + t.format("headlessNote");

@@ -254,6 +254,38 @@ describe("/auto-approve handler", () => {
     expect(messages).toEqual(["fallback policy: ask"]);
   });
 
+  test("bare display reports the current display mode", async () => {
+    const modeManager = makeModeManager(tmpDir());
+    const { pi, command } = makeCommandPi();
+    registerAutoApproveCommand(pi, modeManager, t);
+    const cmd = command();
+
+    let { ctx, messages } = makeCommandCtx();
+    await runCommand(modeManager, cmd.handler, "display", ctx);
+    expect(messages).toEqual(["display mode: both"]); // default
+
+    modeManager.setDisplay("marker");
+    ({ ctx, messages } = makeCommandCtx());
+    await runCommand(modeManager, cmd.handler, "display", ctx);
+    expect(messages).toEqual(["display mode: marker"]);
+  });
+
+  test("bare risk reports the current block risk level", async () => {
+    const modeManager = makeModeManager(tmpDir());
+    const { pi, command } = makeCommandPi();
+    registerAutoApproveCommand(pi, modeManager, t);
+    const cmd = command();
+
+    let { ctx, messages } = makeCommandCtx();
+    await runCommand(modeManager, cmd.handler, "risk", ctx);
+    expect(messages).toEqual(["block risk: high"]); // default
+
+    modeManager.setBlockRisk("medium");
+    ({ ctx, messages } = makeCommandCtx());
+    await runCommand(modeManager, cmd.handler, "risk", ctx);
+    expect(messages).toEqual(["block risk: medium"]);
+  });
+
 });
 
 // ── completions: both locales ────────────────────────────────────────

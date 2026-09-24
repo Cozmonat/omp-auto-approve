@@ -26,6 +26,8 @@ interface Dictionary {
   reasonDeny: string;
   reasonHighRisk: string;
   reasonMediumRisk: string;
+  reasonTruncated: string;
+  reasonNoVerdict: string;
   riskLow: string;
   riskMedium: string;
   riskHigh: string;
@@ -33,6 +35,8 @@ interface Dictionary {
   deniedJudgeDeclined: string;
   deniedJudgeRisk: string;
   deniedJudgeUnavailable: string;
+  deniedNoVerdict: string;
+  deniedTooLong: string;
   deniedUserDenied: string;
   headlessNote: string;
   analyzing: string;
@@ -51,6 +55,8 @@ interface Dictionary {
   cmdFallbackBlockDescription: string;
   fallbackStatus: string;
   fallbackSwitched: string;
+  displayStatus: string;
+  riskStatus: string;
   confirmTitle: string;
   allowPrompt: string;
   commandLabel: string;
@@ -68,7 +74,9 @@ const EN: Dictionary = {
     "  (no argument)         toggle enabled and show current settings",
     "  on | off              enable / disable (persisted)",
     "  status                show current settings",
+    "  display                show where auto-approval is shown",
     "  display <off|marker|both>  where auto-approval is shown (persisted)",
+    "  risk                   show the block risk level",
     "  risk <medium|high>    block risk level (persisted)",
     "  fallback <ask|block>  policy when the risk threshold is crossed (persisted)",
   ].join("\n"),
@@ -87,6 +95,8 @@ const EN: Dictionary = {
   reasonDeny: "judge declined",
   reasonHighRisk: "high risk",
   reasonMediumRisk: "medium risk",
+  reasonTruncated: "too long to assess in full",
+  reasonNoVerdict: "no usable verdict",
   riskLow: "low",
   riskMedium: "medium",
   riskHigh: "high",
@@ -94,6 +104,8 @@ const EN: Dictionary = {
   deniedJudgeDeclined: "The judge model reviewed this command and declined it{0}. Nothing was executed. Do not retry the same command; use a safer alternative.",
   deniedJudgeRisk: "The judge model rated this command {0} risk{1}. Nothing was executed. Do not retry the same command; use a safer alternative.",
   deniedJudgeUnavailable: "The judge model could not be consulted ({0}), so this command was blocked by the fail-closed default. Nothing was executed; the command was not assessed as dangerous. Retry once the judge is available, or use a clearly safe command.",
+  deniedNoVerdict: "The judge model responded but did not produce a usable risk verdict, so this command was blocked by the fail-closed default. Nothing was executed. Retry the assessment, or use a clearly safe command.",
+  deniedTooLong: "This command is {0} characters long; the judge can only assess the first {1}, so it was blocked by the fail-closed default. Nothing was executed. Split it into shorter commands so each one can be fully assessed.",
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
   analyzing: "auto-approve: assessing risk…",
@@ -112,6 +124,8 @@ const EN: Dictionary = {
   cmdFallbackBlockDescription: "block without asking",
   fallbackStatus: "fallback policy: {0}",
   fallbackSwitched: "fallback policy set to {0}.",
+  displayStatus: "display mode: {0}",
+  riskStatus: "block risk: {0}",
   confirmTitle: "⚠️ Dangerous command review",
   allowPrompt: "Allow execution?",
   commandLabel: "Command",
@@ -129,7 +143,9 @@ const ZH: Dictionary = {
     "  (不带参数)           切换启用状态并显示当前配置",
     "  on | off             启用 / 停用(会持久化)",
     "  status               显示当前配置",
+    "  display                显示自动审批的展示位置",
     "  display <off|marker|both>  自动审批的展示位置(会持久化)",
+    "  risk                   显示拦截的风险等级",
     "  risk <medium|high>   拦截的风险等级(会持久化)",
     "  fallback <ask|block> 风险阈值被越过时的策略(会持久化)",
   ].join("\n"),
@@ -148,6 +164,8 @@ const ZH: Dictionary = {
   reasonDeny: "裁判拒绝",
   reasonHighRisk: "高风险",
   reasonMediumRisk: "中风险",
+  reasonTruncated: "过长,无法完整评估",
+  reasonNoVerdict: "无可用的风险判定",
   riskLow: "低",
   riskMedium: "中",
   riskHigh: "高",
@@ -155,6 +173,8 @@ const ZH: Dictionary = {
   deniedJudgeDeclined: "裁判模型审查了该命令并拒绝了它{0}。未执行任何内容。不要重试相同命令;请改用更安全的替代方案。",
   deniedJudgeRisk: "裁判模型将该命令评为 {0} 风险{1}。未执行任何内容。不要重试相同命令;请改用更安全的替代方案。",
   deniedJudgeUnavailable: "无法咨询裁判模型({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容;该命令未被评估为危险。请在裁判可用后重试,或改用明显安全的命令。",
+  deniedNoVerdict: "裁判模型有响应,但未给出可用的风险判定,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请重试评估,或改用明显安全的命令。",
+  deniedTooLong: "该命令长达 {0} 个字符;裁判只能评估前 {1} 个字符,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请拆分为更短的命令,使每条命令都能被完整评估。",
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",
   analyzing: "auto-approve: 正在评估风险…",
@@ -173,6 +193,8 @@ const ZH: Dictionary = {
   cmdFallbackBlockDescription: "不询问,直接拦截",
   fallbackStatus: "回退策略: {0}",
   fallbackSwitched: "回退策略已设为 {0}。",
+  displayStatus: "展示方式: {0}",
+  riskStatus: "拦截风险等级: {0}",
   confirmTitle: "⚠️ 危险命令确认",
   allowPrompt: "是否允许执行？",
   commandLabel: "命令",

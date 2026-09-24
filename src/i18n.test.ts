@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { createI18n, I18nLang } from "./i18n";
+import { createI18n } from "./i18n";
+import type { I18nLang } from "./i18n";
 
 function keySet(lang: I18nLang): Set<string> {
   const i18n = createI18n(lang);
@@ -12,6 +13,35 @@ function keySet(lang: I18nLang): Set<string> {
   // possible from the outside; the module exports its key list for this.
   return new Set(i18n.keys());
 }
+
+/** The complete key contract. A key dropped from either locale's
+ *  dictionary (caught here at test time, not only by tsc) makes
+ *  format() pass the raw key through as user-facing text. */
+const EXPECTED_KEYS = [
+  "allowPrompt", "analysisUnavailable", "analyzing", "blocked",
+  "cmdDescription", "cmdDisplayBothDescription", "cmdDisplayDescription",
+  "cmdDisplayMarkerDescription", "cmdDisplayOffDescription",
+  "cmdFallbackAskDescription", "cmdFallbackBlockDescription", "cmdFallbackDescription",
+  "cmdOffDescription", "cmdOnDescription", "cmdRiskDescription",
+  "cmdRiskHighDescription", "cmdRiskMediumDescription", "cmdStatusDescription",
+  "commandLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
+  "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
+  "displayStatus", "fallbackStatus", "fallbackSwitched", "headlessNote", "help",
+  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked",
+  "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonMediumRisk", "reasonNoVerdict",
+  "reasonTruncated",
+  "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
+  "statusDisabled", "statusEnabled", "switchDisplay", "switchEnabled", "switchDisabled",
+  "switchRisk", "userDenied",
+].sort();
+
+describe("key completeness", () => {
+  test("both locales expose the full key contract", () => {
+    for (const lang of ["en", "zh"] as const) {
+      expect([...createI18n(lang).keys()].sort()).toEqual(EXPECTED_KEYS);
+    }
+  });
+});
 
 describe("locale parity", () => {
   test("en and zh expose the identical key set", () => {

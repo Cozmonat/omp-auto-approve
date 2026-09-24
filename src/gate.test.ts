@@ -498,3 +498,78 @@ describe("BashGate headless", () => {
     await rig.dispose();
   });
 });
+
+describe("BashGate over-budget commands", () => {
+  /** Deep child factory: `alive` models get a live child with prose. */
+  function deepSpecsLocal(alive: Record<string, string>): {
+    factory: (model: string) => FakeRpcChild;
+    children: FakeRpcChild[];
+  } {
+    const children: FakeRpcChild[] = [];
+    const factory = (model: string): FakeRpcChild => {
+      const child =
+        model in alive ? new FakeRpcChild({ replyText: alive[model] }) : new FakeRpcChild({ dead: true });
+      children.push(child);
+      return child;
+    };
+    return { factory, children };
+  }
+
+  /** A command longer than the 50-char assessment window used below. */
+  const longCommand = `run the batch: ${"x".repeat(490)}`;
+  test("an allow verdict cannot approve a command the judge only saw in part", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, {});
+    rig.store.config.subjectMaxChars = 50;
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    const details = result.details as { reason?: string; length?: number; subjectMaxChars?: number } | undefined;
+    expect(details?.reason).toBe("truncated");
+    expect(details?.length).toBe(longCommand.length);
+    expect(details?.subjectMaxChars).toBe(50);
+    expect(result.content[0].text).toContain("characters long");
+    await rig.dispose();
+  });
+
+  test("an over-budget command escalates to the user dialog when fallback=ask", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const deep = deepSpecsLocal({ "@tiny": "prose about the long command" });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
+    rig.store.config.subjectMaxChars = 50;
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[0] });
+    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(dialogs).toHaveLength(1);
+    // The dialog shows the FULL command, not the judged prefix.
+    expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
+    await rig.dispose();
+  });
+
+  test("an unparseable judge response blocks with a no-verdict explanation", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: "I think this is fine." }], {});
+    const rig = makeRig(factory, children);
+    const { ctx, calls, notifications } = makeCtx();
+    const result = await rig.gate.execute({ command: "ls" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(result.content[0].text).toContain("did not produce a usable risk verdict");
+    // Blocked verdicts still toast.
+    expect(notifications.some((n) => n.level === "warning")).toBe(true);
+    await rig.dispose();
+  });
+
+  test("a short command at exactly the cap is still auto-approved", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, {});
+    rig.store.config.subjectMaxChars = 50;
+    const exact = "y".repeat(50);
+    const { ctx, calls } = makeCtx();
+    const result = await rig.gate.execute({ command: exact }, undefined, undefined, ctx);
+    expect(result.isError ?? false).toBe(false);
+    expect(calls).toHaveLength(1);
+    await rig.dispose();
+  });
+});

@@ -19,8 +19,8 @@ BashGate.execute()
    ├─ enabled: false ────────────────────────────────► delegate to native bash
    │
    ├─ Stage 1: judge verdict (config.model, default @judge)
-   │     one-shot prompt: fixed rubric + command subject (capped at
-   │     subjectMaxChars) → JSON { risk: low|medium|high, recommend: allow|deny }
+  │     one-shot prompt: fixed rubric + working directory + command subject
+  │     (capped at subjectMaxChars) → JSON { risk: low|medium|high, recommend: allow|deny }
    │     run by a persistent `omp --mode rpc` child (spawned lazily,
    │     per-assessment session reset, idle-reaped, respawned on model change)
    │
@@ -51,6 +51,22 @@ BashGate.execute()
 
 Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide — the common `block` path never launches the deep model.
 
+## Judge model
+
+Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two caveats matter in practice:
+
+- **A non-chat judge role cannot produce verdicts.** Some hosts resolve the `judge` role to a *scoring* model (a "typesafe" judgment endpoint such as a local Decider) that answers typed-choice probes instead of chat prompts. The RPC `prompt` path is a chat prompt, so such a model completes with **no assistant text** — the plugin reads that as *no usable verdict* and fails closed: **every** command is blocked, with a denial that names the category (`no-verdict`). If that describes your `@judge` role, set `model` to a chat model that can answer the rubric (`@smol`, `@tiny`, or a local chat model) and everything works with no other change. (The `judge` role also accepts chat models, so `@judge` is fine whenever the host resolves it that way.)
+- **The command text is model-facing input to the judge.** The judge is a different model from the one that proposed the command, so self-deception is bounded — but the judge still reads the command, and small models can be manipulated by instructions embedded in it. The rubric tells the judge to treat the command text as untrusted, and any verdict the judge cannot express is a block. For sensitive work prefer `fallback: "ask"` (a human sees the full command and the deep analysis) or `blockRisk: "medium"` (fewer commands are auto-approved at all).
+
+**Troubleshooting**
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Every command blocked — "judge unavailable" | Host `omp` binary unresolved (see Host support) | Install `omp` on `PATH`, or run the session under the host it ships with |
+| Every command blocked — "no usable verdict" | `model` points at a non-chat judgment role | Set `model` to a chat model (e.g. `@smol`, `@tiny`) |
+| Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or use a faster `model` |
+| A long command is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` |
+
 ## Headless sessions
 
 Headless sessions (subagents, no UI) run the same two-stage judge — the RPC child needs no UI — but `fallback: "ask"` degrades to `block`: no dialog is ever shown and the deep-analysis model is never launched. Blocked commands simply do not execute, and the denial text tells the model why — judge declined, the risk rating, or judge unavailable (fail-closed) — plus an explicit note that no confirmation dialog was shown, so a headless denial is never mistaken for a user decision. Low-risk verdicts are auto-approved and execute headlessly.
@@ -64,9 +80,11 @@ Switch at runtime from the TUI (or RPC client) — no restart needed; changes pe
 /auto-approve on           # enable
 /auto-approve off          # disable (pass-through to native bash)
 /auto-approve status       # show enabled state, model, display, block risk
+/auto-approve display             # show the current display mode
 /auto-approve display off       # silent approvals (marker + toast hidden)
 /auto-approve display marker    # marker line inside the tool call only
 /auto-approve display both      # marker + assessment-result toast (default)
+/auto-approve risk               # show the current block risk level
 /auto-approve risk medium       # block medium and high risk
 /auto-approve risk high         # block high risk only (default)
 /auto-approve fallback          # show the current fallback policy
@@ -90,7 +108,7 @@ File: `~/.omp/agent/auto-approve.json` (created on first write-back). Runtime sw
 | `deepModel` | `@tiny` | — | — | Deep-analysis model for stage 2; `@smol` is tried automatically when it is unavailable (file-only) |
 | `timeoutMs` | `30000` | — | — | Per-attempt timeout for judge and deep-analysis prompts (`0` = none) |
 | `idleMs` | `600000` | — | — | Both RPC children are reaped after this idle period and respawn lazily |
-| `subjectMaxChars` | `4000` | — | — | Command length capped for the prompts only; the UI always shows the whole command |
+| `subjectMaxChars` | `4000` | — | — | Command length sent to the prompts; a command longer than this is **never auto-approved** (the judge only sees the first N characters, so the full command would run unassessed) — it blocks, or escalates to the user dialog with `fallback: "ask"` |
 
 The four slash-switchable keys (`enabled`, `display`, `blockRisk`, `fallback`) are also exposed through the host Settings UI (`omp.settings` in `package.json`) and `omp plugin config get|set`; a parity test keeps the schema in sync with the slash surface.
 
@@ -112,7 +130,7 @@ AutoApprove (orchestrator — registers tool, command, shutdown hook)
                       by the extension itself
 ```
 
-Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/agent/logs/`): identifiers and verdicts only — never the raw command.
+Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/logs/auto-approve.log`): identifiers and verdicts only — never the raw command.
 
 **Fail-closed everywhere**: host binary unresolved, child crash, prompt timeout, or an unreadable verdict all produce a block (or, under `fallback: "ask"` with a UI, a dialog the user must affirm). Nothing executes on uncertainty.
 

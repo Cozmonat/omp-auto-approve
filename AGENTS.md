@@ -35,6 +35,6 @@ A persistable runtime-switchable key needs **both**:
 - slash path above, and
 - `omp.settings` schema (`type` / `values` / `default` / `description`), `HOST_SETTING_KEYS`, parse/merge in `src/config.ts`, and the schema-parity test in `src/config.test.ts`.
 
-`enabled`, `display`, and `blockRisk` are those keys: `/auto-approve on|off`, `/auto-approve display off|marker|both`, and `/auto-approve risk medium|high` are the slash surfaces; the same keys appear in `omp.settings`.
+`enabled`, `display`, `blockRisk`, and `fallback` are those keys: `/auto-approve on|off`, `/auto-approve display [off|marker|both]`, `/auto-approve risk [medium|high]`, and `/auto-approve fallback [block|ask]` are the slash surfaces (a bare `display`/`risk`/`fallback` shows the current value); the same keys appear in `omp.settings`.
 
 Do not add `omp.commands`. Command files in the plugin manifest are a different OMP discovery path; this plugin registers commands from the extension factory.

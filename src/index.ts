@@ -144,6 +144,10 @@ export function registerAutoApproveCommand(
         showCommandResult(ctx, t.format("switchDisabled"));
       } else if (arg === "status") {
         showCommandResult(ctx, statusText(modeManager, t));
+      } else if (arg === "display") {
+        showCommandResult(ctx, t.format("displayStatus", modeManager.getDisplay()));
+      } else if (arg === "risk") {
+        showCommandResult(ctx, t.format("riskStatus", modeManager.getBlockRisk()));
       } else if (arg.startsWith("display ")) {
         const value = arg.slice("display ".length).trim();
         if (!(DISPLAY_VALUES as readonly string[]).includes(value)) {

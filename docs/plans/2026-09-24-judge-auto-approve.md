@@ -1,6 +1,6 @@
 # Plan — omp-auto-approve: judge-model auto-approval plugin for OMP
 
-Status: approved plan, implementation in progress (2026-09-24).
+Status: **implemented** (2026-09-24, shipped as v1.0.0). Delivery deltas vs. this plan: §9.
 Reference: `omp-smart-approve` (sibling project, v3.11.0).
 
 ## 1. Goal
@@ -313,3 +313,33 @@ reference's completion-provider shape.
 | Judge child slower than `timeoutMs` (local models) | default 30s matches reference; `timeoutMs` configurable; per-assessment `new_session` keeps the prompt prefix tiny |
 | RPC protocol drift across OMP versions | protocol is stable/documented (ready frame + prompt + agent_end); invoker ignores unknown noise frames like the reference |
 | `dist/` must be rebuilt before the host sees source changes | AGENTS.md documents the `bun run build` step (reference pattern) |
+
+## 9. Delivery notes (2026-09-24, v1.0.0)
+
+Implemented as planned, with these deliberate additions discovered during
+adversarial review of the shipped code:
+
+- **`fallback: "ask"`** (config, slash: `/auto-approve fallback ask`,
+  Settings UI): when the judge blocks, a user dialog shows the full command
+  plus a second-model (deep-analysis) read; "Allow once" delegates, anything
+  else denies. Without it the non-goal "no dialogs" is honored by default.
+  Headless sessions always degrade to a plain block.
+- **Truncation rule**: a command longer than `subjectMaxChars` is never
+  auto-approved (the judge would only see a prefix) — blocked as
+  "too long to assess in full", or shown in full in the user dialog under
+  `fallback: "ask"`. The cap is still sent to the prompts.
+- **`cwd` restored** in both judge and deep prompts (rubric + prompt include
+  the working directory).
+- **Bare `/auto-approve display` and `/auto-approve risk`** print the current
+  value (mirroring `on`/`off` status parity), not the help.
+- **Denial text distinguishes failure modes**: judge error names the category
+  (`no-verdict` vs timeout/crash/unavailable) and says *nothing executed,
+  not assessed as dangerous*; an empty completion from a non-chat judge role
+  is "no usable verdict", not "unavailable".
+- **Failures are logged** (`~/.omp/logs/auto-approve.log`, redacting,
+  rotating) so a user blocked by a misconfigured judge role can diagnose it
+  without a TUI.
+
+Verified: `bun test src` green, `bun run typecheck` clean,
+`bun run build` emits `dist/index.js`; live contract proven with a real
+`omp --mode rpc` child (allow / deny / non-chat-judge empty-verdict paths).

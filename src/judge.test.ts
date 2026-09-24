@@ -151,6 +151,11 @@ describe("buildJudgePrompt", () => {
     expect(bounded).toContain("truncated");
     expect(bounded.length).toBeLessThan(unbounded.length);
   });
+
+  test("includes the working directory when provided, omits it otherwise", () => {
+    expect(buildJudgePrompt("ls", 4000, "/work/repo")).toContain("Working directory: /work/repo");
+    expect(buildJudgePrompt("ls", 4000)).not.toContain("Working directory");
+  });
 });
 
 describe("outcomeFromPrompt", () => {
@@ -393,6 +398,11 @@ describe("deep analysis", () => {
     const bounded = buildDeepPrompt(long, 100);
     expect(bounded).not.toContain(long);
     expect(bounded).toContain("truncated");
+  });
+
+  test("includes the working directory when provided, omits it otherwise", () => {
+    expect(buildDeepPrompt("rm -rf /tmp/x", 4000, "/scratch")).toContain("Working directory: /scratch");
+    expect(buildDeepPrompt("rm -rf /tmp/x")).not.toContain("Working directory");
   });
 
   test("buildJudgeArgs accepts a system-prompt override for the deep child", () => {
