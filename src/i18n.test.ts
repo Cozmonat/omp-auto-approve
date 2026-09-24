@@ -30,7 +30,7 @@ const EXPECTED_KEYS = [
   "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked",
   "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonMediumRisk", "reasonNoVerdict",
   "reasonTruncated",
-  "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
+  "riskDeep", "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
   "statusDisabled", "statusEnabled", "switchDisplay", "switchEnabled", "switchDisabled",
   "switchRisk", "userDenied",
 ].sort();

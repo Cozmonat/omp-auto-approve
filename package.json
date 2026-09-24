@@ -57,7 +57,7 @@
       },
       "fallback": {
         "default": "block",
-        "description": "Policy when the judge crosses the risk threshold or no usable verdict arrives: block (fail-closed default, deny without asking) or ask (show a dialog with the deep-analysis summary for the user to decide; degrades to block without a UI).",
+        "description": "Policy when the judge crosses the risk threshold or no usable verdict arrives: block (fail-closed default, deny without asking) or ask (a deep-analysis model re-analyzes the command — a cleared command is auto-approved, a risky one opens a dialog for the user to decide; degrades to block without a UI).",
         "type": "enum",
         "values": [
           "ask",
@@ -77,5 +77,5 @@
     "test": "bun test src",
     "typecheck": "tsc --noEmit"
   },
-  "version": "1.0.1"
+  "version": "1.1.0"
 }

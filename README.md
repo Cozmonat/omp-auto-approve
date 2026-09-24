@@ -1,12 +1,12 @@
 # auto-approve
 
-Judge-model auto-approval for **oh-my-pi (OMP)**: a persistent `omp --mode rpc` child runs the `@judge` model role as a one-shot risk assessor for every bash command. Low-risk commands execute with zero interruption; everything at or above the risk threshold fails closed — or, with `fallback: "ask"`, a second (deeper, cheaper) model analysis is shown in a dialog so the user decides.
+Judge-model auto-approval for **oh-my-pi (OMP)**: a persistent `omp --mode rpc` child runs the `@judge` model role as a one-shot risk assessor for every bash command. Low-risk commands execute with zero interruption; everything at or above the risk threshold fails closed — or, with `fallback: "ask"`, a second (deeper, cheaper) model re-analyzes it: a command that model clears is auto-approved, and only a command it flags as genuinely risky is shown in a dialog for the user to decide.
 
 Covered execution surface:
 
 | Tool | Mechanism | Decision |
 |---|---|---|
-| `bash` | Custom tool shadowing the built-in | judge verdict + risk threshold (+ optional deep-analysis dialog) |
+| `bash` | Custom tool shadowing the built-in | judge verdict + risk threshold (+ deep analysis under `fallback: "ask"`) |
 
 Every other tool is untouched. With `enabled: false` the shadowed tool delegates straight to the native bash tool — no model is consulted.
 
@@ -38,15 +38,17 @@ BashGate.execute()
                └─ UI available
                      Stage 2: deep analysis (config.deepModel, default @tiny;
                      retries @smol when @tiny is unavailable; a separate
-                     persistent RPC child runs the prose analyst)
-                     → one-paragraph summary + what the command will do
-                     → dialog: "⚠️ Dangerous command review"
-                           [ ✅ Allow once | ❌ Deny ]
-                           (degrades to a two-way confirm when ui.select
-                           is unavailable)
-                     ├─ Allow once ───────────────────► delegate + display surfaces
-                     └─ Deny / unresolvable answer ───► fail-closed block +
-                                                        "user denied" toast
+                     persistent RPC child re-analyzes and returns a verdict)
+                     ├─ deep model clears it (no real risk) ─► auto-approve +
+                     │                                          display surfaces
+                     └─ deep model flags a real risk (or no verdict)
+                           → dialog: "⚠️ Dangerous command review"
+                                 [ ✅ Allow once | ❌ Deny ]
+                                 (degrades to a two-way confirm when ui.select
+                                 is unavailable)
+                           ├─ Allow once ───────────────────► delegate + display surfaces
+                           └─ Deny / unresolvable answer ───► fail-closed block +
+                                                              "user denied" toast
 ```
 
 Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide — the common `block` path never launches the deep model.
@@ -55,7 +57,7 @@ Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide 
 
 Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two caveats matter in practice:
 
-- **A non-chat judge role cannot produce verdicts.** Some hosts resolve the `judge` role to a *scoring* model (a "typesafe" judgment endpoint such as a local Decider) that answers typed-choice probes instead of chat prompts. The RPC `prompt` path is a chat prompt, so such a model completes with **no assistant text** — the plugin reads that as *no usable verdict* and fails closed: **every** command is blocked, with a denial that names the category (`no-verdict`). If that describes your `@judge` role, set `model` to a chat model that can answer the rubric (`@smol`, `@tiny`, or a local chat model) and everything works with no other change. (The `judge` role also accepts chat models, so `@judge` is fine whenever the host resolves it that way.)
+- **A non-chat judge role cannot produce verdicts.** A TypeSafe-only `@judge` role answers typed-choice probes, not chat prompts; the RPC child then returns no assistant text and the plugin fails closed (`no-verdict`). Set `model` to a chat-capable role (`@smol`, `@tiny`, or a local chat endpoint). The local Decider server at `~/Documents/decider/decider_server.py` now exposes an OpenAI-compatible chat lane alongside its TypeSafe lane; configure an OMP chat model with base URL `http://127.0.0.1:8000/v1` and model `decider-2b-mlx-4bit`, then select it in the plugin config file. Its risk scores are uncalibrated: test representative commands before relying on unattended approvals. Do not use its TypeSafe-only role for this plugin.
 - **The command text is model-facing input to the judge.** The judge is a different model from the one that proposed the command, so self-deception is bounded — but the judge still reads the command, and small models can be manipulated by instructions embedded in it. The rubric tells the judge to treat the command text as untrusted, and any verdict the judge cannot express is a block. For sensitive work prefer `fallback: "ask"` (a human sees the full command and the deep analysis) or `blockRisk: "medium"` (fewer commands are auto-approved at all).
 
 **Troubleshooting**
@@ -63,7 +65,7 @@ Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Every command blocked — "judge unavailable" | Host `omp` binary unresolved (see Host support) | Install `omp` on `PATH`, or run the session under the host it ships with |
-| Every command blocked — "no usable verdict" | `model` points at a non-chat judgment role | Set `model` to a chat model (e.g. `@smol`, `@tiny`) |
+| Every command blocked — "no usable verdict" | `model` points at a non-chat judgment role | Set `model` to a chat model (e.g. `@smol`, `@tiny`, or the Decider chat lane) |
 | Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or use a faster `model` |
 | A long command is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` |
 
@@ -103,7 +105,7 @@ File: `~/.omp/agent/auto-approve.json` (created on first write-back). Runtime sw
 | `enabled` | `true` | yes | yes | Master switch; `false` delegates every bash call to the native tool |
 | `display` | `both` | yes | yes | `off` \| `marker` \| `both` — where approval markers appear; blocked verdicts are always visible |
 | `blockRisk` | `high` | yes | yes | `medium` \| `high` — minimum judge risk level that blocks |
-| `fallback` | `block` | yes | yes | `block` \| `ask` — policy when the risk threshold is crossed or no usable verdict arrives; `ask` opens the deep-analysis dialog and degrades to `block` without a UI |
+| `fallback` | `block` | yes | yes | `block` \| `ask` — policy when the risk threshold is crossed or no usable verdict arrives; `ask` runs a deep-analysis model that auto-approves a cleared command or opens a dialog for a risky one (degrades to `block` without a UI) |
 | `model` | `@judge` | — | — | Judge model role for stage-1 verdicts (file-only) |
 | `deepModel` | `@tiny` | — | — | Deep-analysis model for stage 2; `@smol` is tried automatically when it is unavailable (file-only) |
 | `timeoutMs` | `30000` | — | — | Per-attempt timeout for judge and deep-analysis prompts (`0` = none) |
@@ -132,7 +134,7 @@ AutoApprove (orchestrator — registers tool, command, shutdown hook)
 
 Both RPC children run with a `--config` overlay that disables discovered context files, so a verdict costs rubric + command tokens, not the project's `AGENTS.md`. Logs go to a redacting rotating log (`~/.omp/logs/auto-approve.log`): identifiers and verdicts only — never the raw command.
 
-**Fail-closed everywhere**: host binary unresolved, child crash, prompt timeout, or an unreadable verdict all produce a block (or, under `fallback: "ask"` with a UI, a dialog the user must affirm). Nothing executes on uncertainty.
+**Fail-closed everywhere**: host binary unresolved, child crash, prompt timeout, or an unreadable verdict all produce a block. The only path that runs a command the first-pass judge flagged is `fallback: "ask"` with a UI, and even then it runs only when the deep model re-analyzes and clears it (no real risk at the threshold) or the user affirms it in the dialog. Nothing executes on uncertainty.
 
 ## Install
 

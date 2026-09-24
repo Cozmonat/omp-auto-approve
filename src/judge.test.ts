@@ -386,10 +386,10 @@ describe("HostResolver", () => {
 });
 
 describe("deep analysis", () => {
-  test("buildDeepPrompt wraps the command with the prose rubric", () => {
+  test("buildDeepPrompt wraps the command with the deep-analysis rubric", () => {
     const prompt = buildDeepPrompt("rm -rf /tmp/x");
     expect(prompt).toContain("rm -rf /tmp/x");
-    expect(prompt).toContain("concrete risks");
+    expect(prompt).toContain("single JSON object");
     expect(prompt).toMatch(/untrusted/i);
   });
 
@@ -426,7 +426,20 @@ describe("deep analysis", () => {
     const factory = (model: string) => new FakeRpcChild({ replyText: `Deep analysis for ${model}` });
     const invoker = makeInvoker(factory);
     const out = await runDeepAnalysis(invoker, "@tiny", "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
-    expect(out).toEqual({ text: "Deep analysis for @tiny", model: "@tiny" });
+    expect(out).toEqual({ text: "Deep analysis for @tiny", model: "@tiny", verdict: null });
+    await invoker.dispose();
+  });
+
+  test("runDeepAnalysis parses a JSON verdict so the caller can auto-approve a cleared command", async () => {
+    const reply = '{"risk":"low","recommend":"allow","summary":"reads a file"}';
+    const factory = () => new FakeRpcChild({ replyText: reply });
+    const invoker = makeInvoker(factory);
+    const out = await runDeepAnalysis(invoker, "@tiny", "cat foo", { timeoutMs: 5000 }, quietLogger);
+    expect(out).toEqual({
+      text: reply,
+      model: "@tiny",
+      verdict: { risk: "low", recommend: "allow", summary: "reads a file" },
+    });
     await invoker.dispose();
   });
 
@@ -435,7 +448,7 @@ describe("deep analysis", () => {
       model === "@tiny" ? new FakeRpcChild({ dead: true }) : new FakeRpcChild({ replyText: "smol says: risky" });
     const invoker = makeInvoker(factory);
     const out = await runDeepAnalysis(invoker, "@tiny", "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
-    expect(out).toEqual({ text: "smol says: risky", model: "@smol" });
+    expect(out).toEqual({ text: "smol says: risky", model: "@smol", verdict: null });
     await invoker.dispose();
   });
 

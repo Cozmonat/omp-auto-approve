@@ -7,9 +7,10 @@
  * threshold the call delegates to the native tool via ctx.invokeTool
  * (inheriting shell path resolution, env hardening, PTY and output
  * truncation).  Above the threshold: fallback=block denies; fallback=ask
- * escalates to a deep-analysis model (tiny, then smol) whose prose summary
- * the user reviews in a dialog.  Headless sessions (no UI) never prompt —
- * even with fallback=ask they block, and the denial text tells the model
+ * consults a deep-analysis model (tiny, then smol), whose verdict either
+ * auto-approves a cleared command or, on real risk, is reviewed by the user
+ * in a dialog.  Headless sessions (no UI) never prompt — even with
+ * fallback=ask they block, and the denial text tells the model
  * why (judge declined / risk rating / judge unavailable, plus a headless
  * note) so it can choose a safer alternative.
  *
@@ -200,11 +201,13 @@ export class BashGate {
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Risk threshold crossed (or no usable verdict).  fallback=ask with a
-    // UI escalates to the deep model (prose analysis) and a user dialog;
-    // every other path blocks without asking.  The toast is always emitted
-    // regardless of the display setting; the tool card carries the
-    // model-visible denial text, which never repeats the raw command.
+    // Risk threshold crossed (or no usable verdict).  fallback=ask with a UI
+    // consults the deep model: when it re-analyzes and clears the command
+    // (no real risk at the configured threshold) it is auto-approved;
+    // otherwise a user dialog is shown. Every other path blocks without
+    // asking. The toast is always emitted regardless of the display setting;
+    // the tool card carries the model-visible denial text, which never
+    // repeats the raw command.
     if (cfg.fallback === "ask" && ctx.hasUI) {
       const { deepInvoker } = this.deps;
       const deep = await runDeepAnalysis(
@@ -218,8 +221,32 @@ export class BashGate {
         logger.log("bash: aborted during deep analysis");
         return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
       }
+      const overBudget = command.length > cfg.subjectMaxChars;
+      const deepDecision = decide(deep?.verdict ?? null, cfg.blockRisk);
+      if (!overBudget && deepDecision.verdict === "allow") {
+        // The deeper analysis re-checked the command and cleared it: no real
+        // risk at the configured threshold, so approve without a dialog.
+        if (signal?.aborted) {
+          logger.log("bash: aborted after deep analysis, not executing");
+          return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
+        }
+        const label = t.format("riskDeep");
+        const summary = deep?.verdict?.summary;
+        if (surfaces.marker) {
+          onUpdate?.({ content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }] });
+        }
+        if (surfaces.notify) {
+          this.notify(ctx, t.format("notifyApproved", label, summary ? `: ${summary}` : ""), "info");
+        }
+        logger.log(`bash: deep analysis cleared the command, auto-approving (risk=${deep?.verdict?.risk ?? "unknown"})`);
+        return this.delegate(params, signal, onUpdate, ctx);
+      }
+      // The deep model flagged a real risk, produced no usable verdict, or the
+      // command is over budget (only a human can review the full command):
+      // show the user dialog.
+      const detail = deep ? (deep.verdict?.summary || deep.text) : "";
       const body =
-        (deep ? deep.text : t.format("analysisUnavailable")) +
+        (deep ? detail : t.format("analysisUnavailable")) +
         `\n\n────────\n${t.format("commandLabel")}: ${command}\n\n${t.format("allowPrompt")}`;
       const choice = await this.confirmDialog(ctx, t.format("confirmTitle"), body);
       if (choice === "allow") {

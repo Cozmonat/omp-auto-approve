@@ -63,6 +63,7 @@ interface Dictionary {
   analysisUnavailable: string;
   userDenied: string;
   riskUser: string;
+  riskDeep: string;
 }
 
 const EN: Dictionary = {
@@ -108,7 +109,7 @@ const EN: Dictionary = {
   deniedTooLong: "This command is {0} characters long; the judge can only assess the first {1}, so it was blocked by the fail-closed default. Nothing was executed. Split it into shorter commands so each one can be fully assessed.",
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
-  analyzing: "auto-approve: assessing risk…",
+  analyzing: "👀 Reviewing command with judge model…",
   cmdOnDescription: "enable auto-approve",
   cmdOffDescription: "disable auto-approve",
   cmdStatusDescription: "show current settings",
@@ -132,6 +133,7 @@ const EN: Dictionary = {
   analysisUnavailable: "risk analysis unavailable",
   userDenied: "user denied",
   riskUser: "user",
+  riskDeep: "deep analysis",
 };
 
 const ZH: Dictionary = {
@@ -177,7 +179,7 @@ const ZH: Dictionary = {
   deniedTooLong: "该命令长达 {0} 个字符;裁判只能评估前 {1} 个字符,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请拆分为更短的命令,使每条命令都能被完整评估。",
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",
-  analyzing: "auto-approve: 正在评估风险…",
+  analyzing: "👀 正在使用裁判模型审查命令…",
   cmdOnDescription: "启用 auto-approve",
   cmdOffDescription: "停用 auto-approve",
   cmdStatusDescription: "显示当前配置",
@@ -201,6 +203,7 @@ const ZH: Dictionary = {
   analysisUnavailable: "风险评估不可用",
   userDenied: "用户拒绝",
   riskUser: "用户",
+  riskDeep: "深度分析",
 };
 
 const DICTIONARIES: Record<I18nLang, Dictionary> = { en: EN, zh: ZH };

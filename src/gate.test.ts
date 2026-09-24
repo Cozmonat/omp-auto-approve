@@ -418,6 +418,52 @@ describe("BashGate fallback escalation", () => {
     expect(dialogs[0]?.body).toContain("risk analysis unavailable");
     await rig.dispose();
   });
+
+  test("fallback=ask + UI: deep model clearing the command auto-approves with no dialog", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
+    const deep = deepSpecs({ "@tiny": '{"risk":"low","recommend":"allow","summary":"just reads a file"}' });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "both" }, deep.factory);
+    const { ctx, calls, dialogs, notifications } = makeCtx({
+      // If the gate wrongly opened a dialog, this denies and blocks.
+      select: async () => "should-never-ask" as never,
+    });
+    const result = await rig.gate.execute({ command: "cat foo" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    expect(deep.children).toHaveLength(1); // only the deep model was consulted
+    expect(dialogs).toHaveLength(0); // deep model cleared it — no dialog
+    expect(notifications.some((n) => n.level === "info" && n.msg.includes("deep analysis"))).toBe(true);
+    await rig.dispose();
+  });
+
+  test("fallback=ask + UI: deep model flagging real risk still opens the user dialog", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
+    const deep = deepSpecs({ "@tiny": '{"risk":"high","recommend":"deny","summary":"deletes the production database"}' });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({
+      select: async (_title, choices) => choices[1], // pick "❌ Deny"
+    });
+    const result = await rig.gate.execute({ command: "dropdb prod" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(0);
+    expect(dialogs).toHaveLength(1); // real risk → a human decides
+    expect(dialogs[0]?.body).toContain("deletes the production database");
+    expect((result.details as { reason?: string }).reason).toBe("user-denied");
+    await rig.dispose();
+  });
+
+  test("fallback=ask + UI: a deep reply with no usable verdict fails safe to the dialog", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
+    const deep = deepSpecs({ "@tiny": "This looks probably fine to me." });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
+    const { ctx, calls, dialogs } = makeCtx({
+      select: async (_title, choices) => choices[0], // user allows
+    });
+    const result = await rig.gate.execute({ command: "rm -rf dist" }, undefined, undefined, ctx);
+    expect(dialogs).toHaveLength(1); // no parseable verdict → cannot auto-approve → ask
+    expect(result.content[0].text).toBe("delegated");
+    expect(calls).toHaveLength(1);
+    await rig.dispose();
+  });
 });
 
 describe("BashGate headless", () => {
@@ -545,6 +591,23 @@ describe("BashGate over-budget commands", () => {
     expect(dialogs).toHaveLength(1);
     // The dialog shows the FULL command, not the judged prefix.
     expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
+    await rig.dispose();
+  });
+
+  test("an over-budget command is never deep-auto-approved, even when the deep model clears it", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const deep = deepSpecsLocal({ "@tiny": '{"risk":"low","recommend":"allow","summary":"looks fine"}' });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
+    rig.store.config.subjectMaxChars = 50;
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[0] });
+    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
+    // The deep model says "allow", but the command is over budget (only its
+    // prefix was judged), so it must NOT auto-approve — the dialog shows the
+    // full command for a human to decide.
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
+    expect(result.content[0].text).toBe("delegated"); // the user allowed it in the dialog
+    expect(calls).toHaveLength(1);
     await rig.dispose();
   });
 
