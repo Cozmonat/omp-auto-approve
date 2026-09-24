@@ -19,7 +19,8 @@ BashGate.execute()
    ├─ enabled: false ────────────────────────────────► delegate to native bash
    │
    ├─ Stage 1: judge verdict (config.model, default @judge)
-  │     one-shot prompt: fixed rubric + working directory + command subject
+  │     one-shot prompt: fixed rubric + working directory + session context
+  │     (conversation excerpts, capped at contextMaxChars) + command subject
   │     (capped at subjectMaxChars) → JSON { risk: low|medium|high, recommend: allow|deny }
    │     run by a persistent `omp --mode rpc` child (spawned lazily,
    │     per-assessment session reset, idle-reaped, respawned on model change)
@@ -58,7 +59,7 @@ Stage 2 is only ever paid when a blocked verdict and `fallback: "ask"` coincide 
 Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two caveats matter in practice:
 
 - **A non-chat judge role cannot produce verdicts.** A TypeSafe-only `@judge` role answers typed-choice probes, not chat prompts; the RPC child then returns no assistant text and the plugin fails closed (`no-verdict`). Set `model` to a chat-capable role (`@smol`, `@tiny`, or a local chat endpoint). The local Decider server at `~/Documents/decider/decider_server.py` now exposes an OpenAI-compatible chat lane alongside its TypeSafe lane; configure an OMP chat model with base URL `http://127.0.0.1:8000/v1` and model `decider-2b-mlx-4bit`, then select it in the plugin config file. Its risk scores are uncalibrated: test representative commands before relying on unattended approvals. Do not use its TypeSafe-only role for this plugin.
-- **The command text is model-facing input to both models.** The judge — and, under `fallback: "ask"`, the deep analyst — is a different model from the one that proposed the command, so self-deception is bounded; but both read the command, and small models can be manipulated by instructions embedded in it. Both rubrics tell the models to treat the command text as untrusted, and any verdict a model cannot express is a block. With `fallback: "ask"` this means a command the deep model *clears* is auto-approved **without a dialog** — a human only sees commands the deep model flags or cannot verdict. If you want no auto-execution of judge-flagged commands, use `fallback: "block"`; `blockRisk: "medium"` reduces how many commands are auto-approved at all.
+- **The command text and conversation excerpts are model-facing input to both models.** The judge — and, under `fallback: "ask"`, the deep analyst — is a different model from the one that proposed the command, so self-deception is bounded; but both read the command and compact conversation context, and small models can be manipulated by instructions embedded in either. Both rubrics tell the models to treat that text as untrusted, and any verdict a model cannot express is a block. With `fallback: "ask"` this means a command the deep model *clears* is auto-approved **without a dialog** — a human only sees commands the deep model flags or cannot verdict. If you want no auto-execution of judge-flagged commands, use `fallback: "block"`; `blockRisk: "medium"` reduces how many commands are auto-approved at all.
 
 **Troubleshooting**
 
@@ -68,8 +69,11 @@ Stage-1 verdicts run on the `@judge` model role by default (`model` config). Two
 | Every command blocked — "no usable verdict" | `model` points at a non-chat judgment role | Set `model` to a chat model (e.g. `@smol`, `@tiny`, or the Decider chat lane) |
 | Every command blocked — timeout | Judge child slower than `timeoutMs` (small local models) | Raise `timeoutMs`, or use a faster `model` |
 | A long command is blocked as "too long to assess in full" | Command exceeds `subjectMaxChars`; the judge would only see a prefix | Split the command, or raise `subjectMaxChars` |
-| Every command blocked — provider error about context length | The judge model's context window is smaller than the full prompt (rubric + command, up to `subjectMaxChars` characters); small local models are prone to this | Lower `subjectMaxChars` until the prompt fits the model's window, or use a judge with a larger window; commands fail closed until then |
+| Every command blocked — provider error about context length | The judge model's context window is smaller than the full prompt (rubric + session context + command); small local models are prone to this | Lower `subjectMaxChars` and/or `contextMaxChars` until the prompt fits the model's window, or use a judge with a larger window; commands fail closed until then |
 
+## Session context
+
+Both models also judge the command's *scope*: compact excerpts of the conversation — the original user task, the latest user request, and the agent's newest plan text — so a verdict reflects why the command runs, not just what it does. The excerpts are credential-redacted, capped at `contextMaxChars` characters total (messages dropped by the budget are reported inside the prompt), and fenced as untrusted data with an explicit instruction not to follow anything inside them. The latest user excerpt is contextual intent, never a new authorization: a mid-conversation message cannot expand what the risk rubric permits. Set `contextMaxChars: 0` for command-only judgements (useful with small-window judge models).
 ## Headless sessions
 
 Headless sessions (subagents, no UI) run the same two-stage judge — the RPC child needs no UI — but `fallback: "ask"` degrades to `block`: no dialog is ever shown and the deep-analysis model is never launched. Blocked commands simply do not execute, and the denial text tells the model why — judge declined, the risk rating, or judge unavailable (fail-closed) — plus an explicit note that no confirmation dialog was shown, so a headless denial is never mistaken for a user decision. Low-risk verdicts are auto-approved and execute headlessly.
@@ -112,6 +116,7 @@ File: `~/.omp/agent/auto-approve.json` (created on first write-back). Runtime sw
 | `timeoutMs` | `30000` | — | — | Per-attempt timeout for judge and deep-analysis prompts (`0` = none) |
 | `idleMs` | `600000` | — | — | Both RPC children are reaped after this idle period and respawn lazily |
 | `subjectMaxChars` | `4000` | — | — | Command length sent to the prompts; a command longer than this is **never auto-approved** (the judge only sees the first N characters, so the full command would run unassessed) — it blocks, or escalates to the user dialog with `fallback: "ask"` |
+| `contextMaxChars` | `3000` | — | — | Session-context budget: characters of conversation excerpts (original task, latest request, recent plan text) the models see as the judgement's scope; `0` = command-only judgement (file-only) |
 
 The four slash-switchable keys (`enabled`, `display`, `blockRisk`, `fallback`) are also exposed through the host Settings UI (`omp.settings` in `package.json`) and `omp plugin config get|set`; a parity test keeps the schema in sync with the slash surface.
 
@@ -123,6 +128,8 @@ Dependency-injected, unit-testable without a running host:
 AutoApprove (orchestrator — registers tool, command, shutdown hook)
  ├─ ConfigStore     — config load + runtime update + selective write-back
  ├─ ModeManager     — runtime switching (enabled / display / blockRisk / fallback)
+ ├─ ContextGatherer — session-context excerpts for the prompts (redacted,
+ │                    budget-capped, fenced as untrusted in the prompt)
  ├─ HostResolver    — resolves the host `omp` binary (execPath / argv1)
  ├─ JudgeInvoker ×2 — persistent `omp --mode rpc` children: one per model role
  │                    (stage-1 judge, stage-2 deep analysis); JSONL stdio

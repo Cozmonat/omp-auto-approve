@@ -156,6 +156,13 @@ describe("buildJudgePrompt", () => {
     expect(buildJudgePrompt("ls", 4000, "/work/repo")).toContain("Working directory: /work/repo");
     expect(buildJudgePrompt("ls", 4000)).not.toContain("Working directory");
   });
+
+  test("inserts the session-context section before the command, omits it otherwise", () => {
+    const prompt = buildJudgePrompt("ls", 4000, "/work", "CONTEXT_SECTION");
+    expect(prompt).toContain("CONTEXT_SECTION");
+    expect(prompt.indexOf("CONTEXT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
+    expect(buildJudgePrompt("ls", 4000, "/work")).not.toContain("CONTEXT_SECTION");
+  });
 });
 
 describe("outcomeFromPrompt", () => {
@@ -416,6 +423,13 @@ describe("deep analysis", () => {
   test("includes the working directory when provided, omits it otherwise", () => {
     expect(buildDeepPrompt("rm -rf /tmp/x", 4000, "/scratch")).toContain("Working directory: /scratch");
     expect(buildDeepPrompt("rm -rf /tmp/x")).not.toContain("Working directory");
+  });
+
+  test("inserts the session-context section before the command, omits it otherwise", () => {
+    const prompt = buildDeepPrompt("ls", 4000, "/scratch", "CONTEXT_SECTION");
+    expect(prompt).toContain("CONTEXT_SECTION");
+    expect(prompt.indexOf("CONTEXT_SECTION")).toBeLessThan(prompt.indexOf("Command to analyze:"));
+    expect(buildDeepPrompt("ls", 4000, "/scratch")).not.toContain("CONTEXT_SECTION");
   });
 
   test("buildJudgeArgs accepts a system-prompt override for the deep child", () => {

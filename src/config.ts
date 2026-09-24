@@ -49,6 +49,11 @@ export interface AutoApproveConfig {
   /** Max characters of the command sent to the judge prompt.
    *  Default 4000. */
   subjectMaxChars: number;
+  /** Session-context budget for the judge prompts: how many characters of
+   *  conversation excerpts (original task, latest request, recent plan
+   *  text) the models see as background for WHY the command runs.
+   *  0 = command-only judgement (no conversation context).  Default 3000. */
+  contextMaxChars: number;
 }
 
 export const DEFAULT_CONFIG: AutoApproveConfig = {
@@ -61,6 +66,7 @@ export const DEFAULT_CONFIG: AutoApproveConfig = {
   timeoutMs: 30_000,
   idleMs: 600_000,
   subjectMaxChars: 4_000,
+  contextMaxChars: 3_000,
 };
 
 /** Merge user config over defaults; every key falls back to its default
@@ -86,6 +92,10 @@ export function mergeConfig(user: unknown): AutoApproveConfig {
       typeof u.subjectMaxChars === "number" && u.subjectMaxChars > 0
         ? u.subjectMaxChars
         : DEFAULT_CONFIG.subjectMaxChars,
+    contextMaxChars:
+      typeof u.contextMaxChars === "number" && u.contextMaxChars >= 0
+        ? u.contextMaxChars
+        : DEFAULT_CONFIG.contextMaxChars,
   };
 }
 

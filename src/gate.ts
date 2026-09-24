@@ -23,6 +23,7 @@ import {
   runDeepAnalysis,
   type JudgeInvoker,
 } from "./judge";
+import { SessionContextGatherer } from "./context";
 import { displaySurfaces } from "./config";
 import type { AutoApproveConfig, ConfigStore } from "./config";
 import type { I18n } from "./i18n";
@@ -40,11 +41,14 @@ import type {
 export interface BashGateDeps {
   /** Runtime config store (enabled / display / blockRisk / fallback / models / timeouts). */
   config: ConfigStore;
+  /** Session-context gatherer: compact conversation excerpts given to both
+   *  models as untrusted background for WHY the command runs. */
+  contextGatherer: SessionContextGatherer;
   i18n: I18n;
   logger: LoggerLike;
   /** Persistent judge child driver (verdict pass, JSON). */
   invoker: JudgeInvoker;
-  /** Persistent deep-analysis child driver (prose pass, tiny→smol). */
+  /** Persistent deep-analysis child driver (verdict pass, tiny→smol). */
   deepInvoker: JudgeInvoker;
 }
 
@@ -151,11 +155,15 @@ export class BashGate {
     // tool with the original params, so relative paths resolve against
     // params.cwd, not the session root.
     const execCwd = this.executionCwd(params, ctx.cwd);
+    // Compact conversation excerpts as untrusted background: the models judge
+    // WHY the command runs, not just what it does. "" when there is no
+    // session history or the budget is 0 (command-only judgement).
+    const contextSection = this.deps.contextGatherer.section(ctx, cfg.contextMaxChars);
     let outcome: JudgeOutcome;
     try {
       outcome = await invoker.assess(
         cfg.model,
-        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd),
+        buildJudgePrompt(command, cfg.subjectMaxChars, execCwd, contextSection),
         { timeoutMs: cfg.timeoutMs, signal },
       );
     } catch (e) {
@@ -219,7 +227,7 @@ export class BashGate {
         deepInvoker,
         cfg.deepModel,
         command,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, timeoutMs: cfg.timeoutMs, signal },
+        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, timeoutMs: cfg.timeoutMs, signal },
         logger,
       );
       if (signal?.aborted) {

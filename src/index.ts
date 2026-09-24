@@ -22,6 +22,7 @@ import { HostResolver, type HostLaunchSpec } from "./host";
 import { JudgeInvoker, makeDeepChildFactory } from "./judge";
 import { ModeManager, DISPLAY_VALUES, BLOCK_RISK_VALUES, FALLBACK_VALUES } from "./mode-manager";
 import { BashGate } from "./gate";
+import { SessionContextGatherer } from "./context";
 
 /** Test seams for the extension factory. */
 export interface AutoApproveOptions {
@@ -195,6 +196,7 @@ export class AutoApprove {
   readonly modeManager: ModeManager;
   readonly invoker: JudgeInvoker;
   readonly deepInvoker: JudgeInvoker;
+  readonly contextGatherer: SessionContextGatherer;
   private readonly logger: LoggerLike;
   private readonly t: I18n;
   private readonly gate: BashGate;
@@ -220,6 +222,7 @@ export class AutoApprove {
       analysisTimeoutMs: this.configStore.config.timeoutMs,
     };
     this.invoker = new JudgeInvoker(launch, this.logger, invokerOptions, options.childFactory);
+    this.contextGatherer = new SessionContextGatherer(this.logger);
     this.deepInvoker = new JudgeInvoker(
       launch,
       this.logger,
@@ -228,6 +231,7 @@ export class AutoApprove {
     );
     this.gate = new BashGate({
       config: this.configStore,
+      contextGatherer: this.contextGatherer,
       i18n: this.t,
       logger: this.logger,
       invoker: this.invoker,

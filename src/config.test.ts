@@ -48,6 +48,7 @@ describe("defaults", () => {
     expect(DEFAULT_CONFIG.timeoutMs).toBe(30_000);
     expect(DEFAULT_CONFIG.idleMs).toBe(600_000);
     expect(DEFAULT_CONFIG.subjectMaxChars).toBe(4_000);
+    expect(DEFAULT_CONFIG.contextMaxChars).toBe(3_000);
   });
 });
 
@@ -95,6 +96,32 @@ describe("file parsing", () => {
       expect(store.config.enabled).toBe(false);
       expect(store.config.timeoutMs).toBe(0);
       expect(store.config.subjectMaxChars).toBe(1200);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  test("contextMaxChars=0 loads (command-only judgement); malformed values keep the default", () => {
+    const env = isolatedHome();
+    try {
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ contextMaxChars: 0 }),
+      );
+      const off = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(off.config.contextMaxChars).toBe(0);
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ contextMaxChars: -100 }),
+      );
+      const negative = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(negative.config.contextMaxChars).toBe(DEFAULT_CONFIG.contextMaxChars);
+      fs.writeFileSync(
+        path.join(env.agent, "auto-approve.json"),
+        JSON.stringify({ contextMaxChars: 500 }),
+      );
+      const custom = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(custom.config.contextMaxChars).toBe(500);
     } finally {
       env.cleanup();
     }

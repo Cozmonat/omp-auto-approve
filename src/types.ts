@@ -183,6 +183,33 @@ export type JudgeOutcome =
   | { kind: "empty"; reason: string }
   | { kind: "error"; reason: string; category: JudgeErrorCategory }
   | { kind: "unavailable"; reason: string };
+/** Bounded, redacted conversation excerpts fed to the judge prompts:
+ *  lets the models reason about why a command runs, not just what it
+ *  does. Selection order and per-slot character budgets are owned by
+ *  SessionContextGatherer.collect: the latest user request first, then the
+ *  original task, the preceding correction, then the newest assistant plan
+ *  text with the remainder of the budget. Identical original/latest
+ *  messages are deduplicated; the omitted-message counts keep budget
+ *  omissions visible. Latest-user excerpts are contextual intent, never a
+ *  new permission authority; assistant text is a claim, not authorization. */
+export interface SessionContext {
+  /** Most recent non-empty user message (the latest correction/authorization). */
+  latestUser: string | null;
+  /** First user message (original task). Null when identical to latestUser. */
+  originalUser: string | null;
+  /** The user message immediately before the latest one, when it exists and
+   *  is distinct from both latestUser and originalUser (a mid-conversation
+   *  correction). */
+  precedingUserCorrection: string | null;
+  /** Newest assistant plan text (a claim, never an authorization). */
+  newestAssistant: string | null;
+  /** User messages whose content is not represented in any slot (deduplicated
+   *  or dropped by the character budget). */
+  omittedUserMessages: number;
+  /** Assistant messages dropped by the character budget (only the newest is
+   *  included). */
+  omittedAssistantMessages: number;
+}
 
 /** A bounded, redaction-free command excerpt for logs (operator-facing). */
 export type LogMessage = string;

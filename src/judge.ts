@@ -144,13 +144,19 @@ const JUDGE_RUBRIC = [
 ].join("\n");
 
 /** Build the per-call judge prompt: static rubric + working directory
- *  (when known) + the command, bounded by subjectMaxChars so a
+ *  (when known) + optional session-context section (untrusted conversation
+ *  excerpts, see context.ts) + the command, bounded by subjectMaxChars so a
  *  pathological command cannot blow the window.  Callers must pass the
- *  session's cwd when the host provides one: the judge cannot know what
- *  a relative path touches without it. */
-export function buildJudgePrompt(command: string, subjectMaxChars: number = 4000, cwd?: string): string {
-  const context = cwd ? `Working directory: ${cwd}\n` : "";
-  return `${JUDGE_RUBRIC}${context}Command to judge:\n${truncateSubject(command, subjectMaxChars)}`;
+ *  execution cwd when the host provides one: the judge cannot know what a
+ *  relative path touches without it. */
+export function buildJudgePrompt(
+  command: string,
+  subjectMaxChars: number = 4000,
+  cwd?: string,
+  contextSection?: string,
+): string {
+  const cwdLine = cwd ? `Working directory: ${cwd}\n` : "";
+  return `${JUDGE_RUBRIC}${cwdLine}${contextSection ?? ""}Command to judge:\n${truncateSubject(command, subjectMaxChars)}`;
 }
 
 const DEEP_RUBRIC = [
@@ -166,11 +172,16 @@ const DEEP_RUBRIC = [
 ].join("\n");
 
 /** Build the deep-analysis prompt: static rubric + working directory
- *  (when known) + the command, bounded by subjectMaxChars like the
- *  judge prompt. */
-export function buildDeepPrompt(command: string, subjectMaxChars: number = 4000, cwd?: string): string {
-  const context = cwd ? `Working directory: ${cwd}\n` : "";
-  return `${DEEP_RUBRIC}${context}Command to analyze:\n${truncateSubject(command, subjectMaxChars)}`;
+ *  (when known) + optional session-context section + the command, bounded
+ *  by subjectMaxChars like the judge prompt. */
+export function buildDeepPrompt(
+  command: string,
+  subjectMaxChars: number = 4000,
+  cwd?: string,
+  contextSection?: string,
+): string {
+  const cwdLine = cwd ? `Working directory: ${cwd}\n` : "";
+  return `${DEEP_RUBRIC}${cwdLine}${contextSection ?? ""}Command to analyze:\n${truncateSubject(command, subjectMaxChars)}`;
 }
 
 /** Candidate models for the deep pass, in order: the configured
@@ -1060,10 +1071,10 @@ export async function runDeepAnalysis(
   invoker: JudgeInvoker,
   deepModel: string,
   command: string,
-  opts: { subjectMaxChars?: number; cwd?: string; timeoutMs: number; signal?: AbortSignal },
+  opts: { subjectMaxChars?: number; cwd?: string; context?: string; timeoutMs: number; signal?: AbortSignal },
   logger?: LoggerLike,
 ): Promise<DeepAnalysis | null> {
-  const prompt = buildDeepPrompt(command, opts.subjectMaxChars ?? 4000, opts.cwd);
+  const prompt = buildDeepPrompt(command, opts.subjectMaxChars ?? 4000, opts.cwd, opts.context);
   for (const model of deepModelCandidates(deepModel)) {
     if (opts.signal?.aborted) return null;
     let outcome: PromptOutcome | null;

@@ -1,6 +1,6 @@
 {
   "author": "cozmonat",
-  "description": "Judge-model auto-approval hook for oh-my-pi (OMP) and pi-agent: one-shot risk assessment via the OMP @judge model role auto-approves low-risk bash operations and blocks everything else (fail-closed).",
+  "description": "Judge-model auto-approval hook for oh-my-pi (OMP) and pi-agent: one-shot risk assessment of each bash command — command plus compact session context — via the OMP @judge model role auto-approves low-risk operations and blocks everything else (fail-closed).",
   "devDependencies": {
     "@types/bun": "^1.3.14",
     "typescript": "^7.0.2"
@@ -77,5 +77,5 @@
     "test": "bun test src",
     "typecheck": "tsc --noEmit"
   },
-  "version": "1.1.1"
+  "version": "1.2.0"
 }
