@@ -551,7 +551,7 @@ describe("BashGate fallback escalation", () => {
 
   test("fallback=ask + UI: deep analysis is shown and user approval delegates", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
-    const deep = deepSpecs({ "@tiny": "rm -rf is destructive; deny." });
+    const deep = deepSpecs({ "@tiny": '{"risk":"high","recommend":"deny","summary":"rm -rf is destructive; deny."}' });
     const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
     const { ctx, calls, dialogs } = makeCtx({
       select: async (_title, choices) => choices[0], // pick "✅ Allow once"
@@ -563,13 +563,31 @@ describe("BashGate fallback escalation", () => {
     expect(dialogs).toHaveLength(1);
     expect(dialogs[0]?.choices).toEqual(["✅ Allow once", "❌ Deny"]);
     expect(dialogs[0]?.body).toContain("rm -rf is destructive; deny.");
-    expect(dialogs[0]?.body).toContain("rm -rf /");
+    await rig.dispose();
+  });
+
+  test("long script approval presents the model's summary without exposing the raw script", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
+    const deep = deepSpecs({
+      "@tiny": '{"risk":"high","recommend":"deny","summary":"Stops the local shim and runs its smoke driver."}',
+    });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
+    const command = `node <<'EOF'\n${"console.log('running');\n".repeat(60)}EOF\npkill -f "node shim.mjs"`;
+    const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[1] });
+    const result = await rig.gate.execute({ command }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]?.body).toContain("Stops the local shim and runs its smoke driver.");
+    expect(dialogs[0]?.body).not.toContain("node <<'EOF'");
+    expect(dialogs[0]?.body).not.toContain("pkill -f");
     await rig.dispose();
   });
 
   test("fallback=ask: user denial blocks without delegating and toasts", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
-    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deepSpecs({ "@tiny": "prose" }).factory);
+    const deep = deepSpecs({ "@tiny": '{"risk":"high","recommend":"deny","summary":"deletes the filesystem root"}' });
+    const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
     const { ctx, calls, notifications } = makeCtx({
       select: async (_title, choices) => choices[1], // pick "❌ Deny"
     });
@@ -587,7 +605,8 @@ describe("BashGate fallback escalation", () => {
 
   test("fallback=ask: an unresolvable dialog answer fails closed to deny", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
-    const rig = makeRig(factory, children, { fallback: "ask" }, deepSpecs({ "@tiny": "prose" }).factory);
+    const deep = deepSpecs({ "@tiny": '{"risk":"high","recommend":"deny","summary":"deletes the filesystem root"}' });
+    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
     const { ctx, calls } = makeCtx({ select: async () => undefined });
     const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
     expect(calls).toHaveLength(0);
@@ -693,7 +712,7 @@ describe("BashGate fallback escalation", () => {
     await rig.dispose();
   });
 
-  test("when no deep model answers, the dialog shows the analysis-unavailable body", async () => {
+  test("when no deep model answers, the command is blocked without an unreviewable dialog", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
     const deep = deepSpecs({});
     const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
@@ -701,10 +720,9 @@ describe("BashGate fallback escalation", () => {
       select: async (_title, choices) => choices[0],
     });
     const result = await rig.gate.execute({ command: "rm -rf /" }, undefined, undefined, ctx);
-    expect(result.content[0].text).toBe("delegated");
-    expect(calls).toHaveLength(1);
-    expect(deep.children.length).toBeGreaterThanOrEqual(2); // tiny + smol both tried
-    expect(dialogs[0]?.body).toContain("risk analysis unavailable");
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(dialogs).toHaveLength(0);
     await rig.dispose();
   });
 
@@ -740,17 +758,17 @@ describe("BashGate fallback escalation", () => {
     await rig.dispose();
   });
 
-  test("fallback=ask + UI: a deep reply with no usable verdict fails safe to the dialog", async () => {
+  test("fallback=ask + UI: deep prose without a risk verdict or summary cannot authorize a hidden command", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: highVerdict }], {});
     const deep = deepSpecs({ "@tiny": "This looks probably fine to me." });
     const rig = makeRig(factory, children, { fallback: "ask", display: "off" }, deep.factory);
     const { ctx, calls, dialogs } = makeCtx({
-      select: async (_title, choices) => choices[0], // user allows
+      select: async (_title, choices) => choices[0],
     });
     const result = await rig.gate.execute({ command: "rm -rf dist" }, undefined, undefined, ctx);
-    expect(dialogs).toHaveLength(1); // no parseable verdict → cannot auto-approve → ask
-    expect(result.content[0].text).toBe("delegated");
-    expect(calls).toHaveLength(1);
+    expect(result.isError).toBe(true);
+    expect(dialogs).toHaveLength(0);
+    expect(calls).toHaveLength(0);
     await rig.dispose();
   });
 
@@ -930,18 +948,18 @@ describe("BashGate over-budget commands", () => {
     await rig.dispose();
   });
 
-  test("an over-budget command escalates to the user dialog when fallback=ask", async () => {
+  test("an over-budget command cannot be approved from a partial summary under fallback=ask", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
     const deep = deepSpecsLocal({ "@tiny": "prose about the long command" });
     const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
     rig.store.config.subjectMaxChars = 50;
     const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[0] });
     const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
-    expect(result.content[0].text).toBe("delegated");
-    expect(calls).toHaveLength(1);
-    expect(dialogs).toHaveLength(1);
-    // The dialog shows the FULL command, not the judged prefix.
-    expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
+    expect(result.isError).toBe(true);
+    expect(result.details).toMatchObject({ reason: "truncated" });
+    expect(calls).toHaveLength(0);
+    expect(dialogs).toHaveLength(0);
+    expect(deep.children).toHaveLength(0);
     await rig.dispose();
   });
 
@@ -955,23 +973,6 @@ describe("BashGate over-budget commands", () => {
     expect(calls).toHaveLength(0);
     expect(deep.children).toHaveLength(0); // a deep clear could never authorize it
     expect(result.details).toMatchObject({ reason: "truncated" });
-    await rig.dispose();
-  });
-
-  test("an over-budget command is never deep-auto-approved, even when the deep model clears it", async () => {
-    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
-    const deep = deepSpecsLocal({ "@tiny": '{"risk":"low","recommend":"allow","summary":"looks fine"}' });
-    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
-    rig.store.config.subjectMaxChars = 50;
-    const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[0] });
-    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
-    // The deep model says "allow", but the command is over budget (only its
-    // prefix was judged), so it must NOT auto-approve — the dialog shows the
-    // full command for a human to decide.
-    expect(dialogs).toHaveLength(1);
-    expect(dialogs[0]?.body).toContain(longCommand.slice(-50));
-    expect(result.content[0].text).toBe("delegated"); // the user allowed it in the dialog
-    expect(calls).toHaveLength(1);
     await rig.dispose();
   });
 

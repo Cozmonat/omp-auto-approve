@@ -68,9 +68,6 @@ interface Dictionary {
   riskStatus: string;
   confirmTitle: string;
   allowPrompt: string;
-  commandLabel: string;
-  codeLabel: string;
-  analysisUnavailable: string;
   userDenied: string;
   riskUser: string;
   riskDeep: string;
@@ -148,9 +145,6 @@ const EN: Dictionary = {
   riskStatus: "block risk: {0}",
   confirmTitle: "⚠️ Dangerous command review",
   allowPrompt: "Allow execution?",
-  commandLabel: "Command",
-  codeLabel: "Code",
-  analysisUnavailable: "risk analysis unavailable",
   userDenied: "user denied",
   riskUser: "user",
   riskDeep: "deep review",
@@ -228,9 +222,6 @@ const ZH: Dictionary = {
   riskStatus: "拦截风险等级: {0}",
   confirmTitle: "⚠️ 危险命令确认",
   allowPrompt: "是否允许执行？",
-  commandLabel: "命令",
-  codeLabel: "代码",
-  analysisUnavailable: "风险评估不可用",
   userDenied: "用户拒绝",
   riskUser: "用户",
   riskDeep: "深度审查",

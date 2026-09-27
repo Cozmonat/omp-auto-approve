@@ -357,14 +357,13 @@ export class ToolGate {
 
     const verdict = outcome.kind === "verdict" ? outcome.verdict : null;
     let decision = decide(verdict, cfg.blockRisk);
-    // The judge only ever sees the first subjectMaxChars of the subject. A
-    // subject longer than that window may hide a payload past the judged
-    // prefix, so no "allow" verdict can authorize it: over-budget subjects
-    // block as "truncated" (or escalate to the user dialog when
-    // fallback=ask and a UI is available).
-    if (decision.verdict === "allow" && subject.length > cfg.subjectMaxChars) {
+    // A prefix-only assessment cannot authorize execution. With the raw
+    // subject hidden from the dialog, a human cannot review the unseen tail
+    // either, so over-budget subjects always fail closed.
+    const overBudget = subject.length > cfg.subjectMaxChars;
+    if (overBudget && outcome.kind === "verdict") {
       decision = { verdict: "block", reason: "truncated" };
-      log(`subject exceeds assessment window (${subject.length} > ${cfg.subjectMaxChars}), overriding allow verdict`);
+      log(`subject exceeds assessment window (${subject.length} > ${cfg.subjectMaxChars}), overriding verdict`);
     }
     log(`decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
@@ -395,19 +394,12 @@ export class ToolGate {
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // Deep review: a real first-pass verdict — or a lane-fallback
-    // (@tiny → @smol) verdict — that crossed the threshold is re-analyzed in
-    // every session and under every fallback.  A deep "clear" auto-approves
-    // (headless too); a deep flag blocks, except fallback=ask with a UI,
-    // where the user decides in a dialog.  When the judge is unavailable, or
-    // its lane failed with no fallback verdict, there is nothing to review:
-    // a deep-model "clear" must not authorize execution (the deep model is
-    // the weakest in the stack), so a broken judge lane fails closed.  An
-    // over-budget subject can never be deep-approved, so it is only reviewed
-    // when a dialog can follow.
-    const overBudget = subject.length > cfg.subjectMaxChars;
+    // A real first-pass risk verdict receives a deep review when the full
+    // subject was assessed. A deep clear auto-approves; a deep flag can be
+    // shown to the user under fallback=ask. Missing analysis or a subject
+    // beyond the assessment window cannot produce an approvable dialog.
     const canAsk = cfg.fallback === "ask" && ctx.hasUI;
-    const deepEscalation = outcome.kind === "verdict" && (canAsk || !overBudget);
+    const deepEscalation = outcome.kind === "verdict" && !overBudget;
     if (outcome.kind !== "verdict") {
       log(`first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
     }
@@ -425,7 +417,7 @@ export class ToolGate {
         return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
       }
       const deepDecision = decide(deep?.verdict ?? null, cfg.blockRisk);
-      if (!overBudget && deepDecision.verdict === "allow") {
+      if (deepDecision.verdict === "allow") {
         // The deeper analysis re-checked the subject and cleared it: no real
         // risk at the configured threshold, so approve without a dialog.
         const label = t.format("riskDeep");
@@ -438,14 +430,10 @@ export class ToolGate {
         return this.delegate(params, signal, onUpdate, ctx);
       }
     }
-    if (deepEscalation && canAsk) {
-      // The deep model flagged a real risk, produced no usable verdict, or the
-      // subject is over budget (only a human can review the full subject):
-      // show the user dialog.
-      const detail = deep ? (deep.verdict?.summary || deep.text) : "";
-      const body =
-        (deep ? detail : t.format("analysisUnavailable")) +
-        `\n\n────────\n${spec.name === "eval" ? t.format("codeLabel") : t.format("commandLabel")}: ${subject}\n\n${t.format("allowPrompt")}`;
+    if (deepEscalation && canAsk && deep?.verdict?.summary) {
+      // Only a usable model-generated summary appears in the dialog.
+      // Without one, the hidden command cannot be reviewed by the user.
+      const body = `${deep.verdict.summary}\n\n${t.format("allowPrompt")}`;
       const choice = await this.confirmDialog(ctx, t.format("confirmTitle"), body);
       if (choice === "allow") {
         // Interrupted after approval → do not execute.

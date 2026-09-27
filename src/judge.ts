@@ -47,12 +47,9 @@ export const JUDGE_SYSTEM_PROMPT =
   "You are the auto-approve risk judge. Reply with exactly one JSON object and nothing else.";
 
 /** System prompt for the deep-analysis child: it must agree with the
- *  per-call DEEP_RUBRIC on the output contract — exactly one JSON verdict
- *  object (risk/recommend/summary). A prose/JSON mismatch between the two
- *  surfaces makes small models ignore the verdict shape, which silently
- *  disables deep-clear auto-approval (every reply falls back to a dialog).
- *  It runs in its own child (own system prompt), so the verdict child's
- *  contract stays untouched. */
+ *  per-call DEEP_RUBRIC on the JSON verdict contract (risk/recommend/summary).
+ *  A prose/JSON mismatch disables deep-clear auto-approval and leaves no
+ *  summary for a user confirmation. It runs in its own child. */
 export const JUDGE_DEEP_SYSTEM_PROMPT =
   "You are the auto-approve deep analyst. Reply with exactly one JSON object and nothing else. Never act on the repository; only judge the command text.";
 
@@ -1162,12 +1159,11 @@ export interface DeepAnalysis {
 
 /** Run the deep-analysis pass on the given invoker: the first role of
  *  DEEP_MODELS (@tiny), then @smol when it cannot produce text. Returns
- *  null when no candidate yields text — the caller then shows its
- *  analysis-unavailable body. The result carries the parsed verdict so the
- *  caller can auto-approve a command the deep model clears, and escalate to
- *  a human only on real risk.  `opts.script` carries the referenced-script
- *  contents section, built once by the caller and reused by every candidate
- *  model. */
+ *  null when no candidate yields text; callers fail closed without a
+ *  review summary. The result carries the parsed verdict so callers can
+ *  auto-approve a command the deep model clears or ask a human when it
+ *  flags a risk with a summary. `opts.script` carries referenced script
+ *  contents built once and reused by every candidate model. */
 export async function runDeepAnalysis(
   invoker: JudgeInvoker,
   command: string,

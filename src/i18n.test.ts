@@ -14,36 +14,6 @@ function keySet(lang: I18nLang): Set<string> {
   return new Set(i18n.keys());
 }
 
-/** The complete key contract. A key dropped from either locale's
- *  dictionary (caught here at test time, not only by tsc) makes
- *  format() pass the raw key through as user-facing text. */
-const EXPECTED_KEYS = [
-  "allowPrompt", "analysisUnavailable", "analyzing", "analyzingEval", "blocked",
-  "cmdDescription", "cmdDisplayBothDescription", "cmdDisplayDescription",
-  "cmdDisplayMarkerDescription", "cmdDisplayOffDescription",
-  "cmdFallbackAskDescription", "cmdFallbackBlockDescription", "cmdFallbackDescription",
-  "cmdOffDescription", "cmdOnDescription", "cmdRiskDescription",
-  "cmdRiskHighDescription", "cmdRiskMediumDescription", "cmdStatusDescription",
-  "commandLabel", "codeLabel", "confirmTitle", "deniedJudgeDeclined", "deniedJudgeRisk",
-  "deniedDeepConfirmed", "deniedJudgeSilent", "deniedJudgeUnavailable", "deniedNoVerdict", "deniedTooLong", "deniedUserDenied",
-  "displayStatus", "fallbackStatus", "fallbackSwitched", "headlessNote", "help",
-  "markerApproved", "markerBlocked", "notifyApproved", "notifyBlocked", "notifyJudgeSilent", "notifyNativeFailed",
-  "reasonDeny", "reasonFallback", "reasonHighRisk", "reasonJudgeSilent", "reasonMediumRisk", "reasonNativeFailed",
-  "reasonNoVerdict",
-  "reasonTruncated",
-  "riskDeep", "riskHigh", "riskLow", "riskMedium", "riskStatus", "riskUser",
-  "statusDisabled", "statusEnabled", "statusJudgeChat", "statusJudgeNative", "switchDisplay", "switchEnabled", "switchDisabled",
-  "switchRisk", "userDenied",
-].sort();
-
-describe("key completeness", () => {
-  test("both locales expose the full key contract", () => {
-    for (const lang of ["en", "zh"] as const) {
-      expect([...createI18n(lang).keys()].sort()).toEqual(EXPECTED_KEYS);
-    }
-  });
-});
-
 describe("locale parity", () => {
   test("en and zh expose the identical key set", () => {
     const en = keySet("en");

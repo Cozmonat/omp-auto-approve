@@ -29,9 +29,9 @@ export interface AutoApproveConfig {
   /** Judge risk level at or above which an operation is blocked. */
   blockRisk: BlockRisk;
   /** Policy when the risk threshold is crossed or no usable verdict
-   *  arrives: "ask" presents a user dialog with the deep-analysis summary
-   *  (degrades to "block" in no-UI/headless contexts); "block" denies
-   *  without asking (fail-closed default). */
+   *  arrives: "ask" presents a dialog with the deep-analysis summary only
+   *  when the full subject was assessed and a summary exists (otherwise
+   *  blocks); "block" denies without asking (fail-closed default). */
   fallback: FallbackMode;
   /** Per-assessment window in ms. 0 = no timeout. Default 30s. */
   timeoutMs: number;
