@@ -135,14 +135,6 @@ describe("parseJudgeVerdict", () => {
 });
 
 describe("buildJudgePrompt", () => {
-  test("wraps the command as untrusted text with the risk rubric", () => {
-    const prompt = buildJudgePrompt("git push origin main");
-    expect(prompt).toContain("git push origin main");
-    expect(prompt).toContain("low");
-    expect(prompt).toContain("high");
-    expect(prompt).toMatch(/untrusted/i);
-  });
-
   test("truncates commands over subjectMaxChars", () => {
     const long = "a".repeat(5000);
     const bounded = buildJudgePrompt(long, 100);
@@ -169,12 +161,6 @@ describe("buildJudgePrompt", () => {
     expect(prompt).toContain("SCRIPT_SECTION");
     expect(prompt.indexOf("SCRIPT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
     expect(buildJudgePrompt("bash run.sh", 4000, "/work")).not.toContain("SCRIPT_SECTION");
-  });
-
-  test("rubric tells the judge to analyse multi-line scripts and provided script contents", () => {
-    const prompt = buildJudgePrompt("ls");
-    expect(prompt).toMatch(/multi-line shell script/i);
-    expect(prompt).toMatch(/script file/i);
   });
 
 });

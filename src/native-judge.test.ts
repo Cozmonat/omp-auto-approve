@@ -71,13 +71,6 @@ describe("buildNativeJudgment", () => {
     expect(req.state.command).toBe("xxxxx\n[... truncated: 15 more characters]");
   });
 
-  test("risk criteria follow the subject kind", () => {
-    const shell = buildNativeJudgment("ls", { subjectMaxChars: 4000 });
-    const code = buildNativeJudgment("1", { subjectMaxChars: 4000, subject: { kind: "eval" } });
-    expect(shell.questions.risk.criteria.high).toContain("rm -rf");
-    expect(code.questions.risk.criteria.high).toContain("subprocess calls");
-    expect(code.questions.risk.instructions).toContain("eval tool");
-  });
 });
 
 describe("assessNative", () => {

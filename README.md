@@ -37,6 +37,10 @@ An operation that cannot be assessed is blocked, not silently approved. A failed
 
 The second review adds model latency only to flagged operations. After approval, execution is delegated to OMP's built-in tool, preserving its normal shell, output, cancellation, and eval behavior.
 
+Normal, non-forced pushes to the intended repository's feature or PR branch are **medium risk**, not high solely because they reach a remote. A checkout or worktree under `/tmp` (including `/private/tmp`) is still a project; its location alone does not raise push risk. At the default `blockRisk: "high"`, these pushes are eligible for automatic approval. The models still assess the destination, user intent, refspec, secret exposure, and production impact. Force-pushes, shared-history rewrites, and remote branch/tag deletions are not covered by this ordinary-push guidance.
+
+GitHub permissions and branch protection reduce risk but do not replace this assessment: a writable wrong branch can accept a push, and CI checks often gate merging rather than prevent pushes. Pushes can also publish secrets or trigger deployments.
+
 ### Headless sessions
 
 Subagents and sessions without a UI use the same two-stage review. Operations cleared by either stage can run automatically. Operations that remain flagged are blocked; `fallback: "ask"` never opens a dialog in a headless session.
