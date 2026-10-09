@@ -16,7 +16,7 @@
  * work; the choice separates the levels cleanly.
  */
 
-import { JUDGE_FRAMING, JUDGE_RISK_LEVELS, truncateSubject, type SubjectInfo } from "./judge";
+import { JUDGE_FRAMING, JUDGE_RISK_LEVELS, type SubjectInfo } from "./judge";
 import { redactForLog } from "./rpc-protocol";
 import type { ExtensionCtx, JudgeOutcome, JudgeVerdict, LoggerLike } from "./types";
 
@@ -51,7 +51,6 @@ export interface NativeJudge {
 }
 
 export interface NativeJudgmentOptions {
-  subjectMaxChars: number;
   cwd?: string;
   /** Session-context section (untrusted conversation excerpts). */
   context?: string;
@@ -60,14 +59,13 @@ export interface NativeJudgmentOptions {
   subject?: SubjectInfo;
 }
 
-/** Build the judgment for one subject: the same inputs, rubric levels,
- *  and guidance as the chat prompt, as a typed state + `risk` choice.
- *  The subject is capped at subjectMaxChars like the chat prompt. */
+/** Build the judgment for one full subject: the same inputs, rubric levels,
+ *  and guidance as the chat prompt, as a typed state + `risk` choice. */
 export function buildNativeJudgment(command: string, opts: NativeJudgmentOptions): NativeJudgmentRequest {
   const kind = opts.subject?.kind ?? "shell";
   const framing = JUDGE_FRAMING[kind];
   const state: Record<string, string> = {
-    [kind === "eval" ? "code" : "command"]: truncateSubject(command, opts.subjectMaxChars),
+    [kind === "eval" ? "code" : "command"]: command,
   };
   if (opts.cwd) state.cwd = opts.cwd;
   if (kind === "eval" && opts.subject?.language) state.language = opts.subject.language;

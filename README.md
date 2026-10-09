@@ -28,12 +28,12 @@ The extension uses OMP's `@judge` model role for the initial assessment and `@ti
 
 ## How approval works
 
-1. **Initial assessment.** The judge reviews the command or code, its working directory, relevant conversation excerpts, and detected script files.
+1. **Initial assessment.** The judge reviews the full command or eval code, its working directory, relevant conversation excerpts, and detected script files.
 2. **Automatic approval.** An allow verdict below the configured risk threshold runs immediately.
 3. **Second review.** A deny verdict or a risk rating at or above the threshold triggers a deeper assessment with `@tiny`, falling back to `@smol` when unavailable. If that review clears the operation, it runs automatically.
 4. **Block or ask.** If the second review still flags a risk, the operation is blocked by default. With `fallback: "ask"`, an interactive session can show a risk summary and let you allow it once or deny it.
 
-An operation that cannot be assessed is blocked, not silently approved. A failed native judge or a chat judge that produces no output gets an initial-assessment fallback through `@tiny` → `@smol`; if no usable verdict is available, the operation stays blocked. A missing risk summary or an over-length command cannot be approved through the confirmation dialog.
+The full command or eval code is submitted at every review stage, without a plugin-imposed subject length limit. An operation that cannot be assessed is blocked, not silently approved. Actual native judgment failures use the existing initial-assessment fallback through `@tiny` → `@smol`; a chat judge that produces no output uses the same fallback. Other chat errors and unparseable replies fail closed. If no usable verdict is available, the operation stays blocked. A missing risk summary cannot be approved through the confirmation dialog.
 
 The second review adds model latency only to flagged operations. After approval, execution is delegated to OMP's built-in tool, preserving its normal shell, output, cancellation, and eval behavior.
 
@@ -83,11 +83,12 @@ Optional settings live in `~/.omp/agent/auto-approve.json`. Missing values use t
 | `fallback` | `"block"` | For operations still flagged after second review: `"block"` denies; `"ask"` offers confirmation when an interactive UI and risk summary are available. |
 | `timeoutMs` | `30000` | Timeout in milliseconds for each model attempt. `0` disables the timeout. |
 | `idleMs` | `600000` | Idle time in milliseconds before review subprocesses are stopped. `0` keeps them alive until the session ends. |
-| `subjectMaxChars` | `4000` | Maximum command or code length that can be fully assessed. Longer inputs are blocked without a dialog. |
 | `contextMaxChars` | `3000` | Total character budget for conversation excerpts. `0` omits conversation context. |
 | `scriptMaxChars` | `4000` | Per-file character budget for referenced scripts. `0` disables script-file reads. |
 
 `enabled`, `display`, `blockRisk`, and `fallback` are also available in the OMP Settings UI and through `omp plugin config get|set`. Host plugin settings take precedence over the JSON file.
+
+`subjectMaxChars` is retired and has no effect. An existing stored value may remain as an unknown user key when other settings are persisted. Conversation and referenced-script budgets are unchanged.
 
 ### What the models see
 
@@ -95,7 +96,7 @@ The review includes the original task, latest user request, and recent agent pla
 
 For bash commands, the extension reviews inline scripts and reads up to three detected script files relative to the execution directory. Common shell, Python, JavaScript/TypeScript, and other script extensions are recognized. Each file is capped at `scriptMaxChars`; missing, unreadable, binary, or oversized files are reported to the model. Remote URLs are not fetched, and script paths containing spaces are not detected, even when quoted.
 
-Choose budgets that fit your review models' context windows. Increasing a budget allows more input to be assessed, but can increase latency, cost, and context-limit failures.
+Choose conversation and referenced-script budgets that fit your review models' context windows alongside the full command or code. Increasing these budgets can increase latency, cost, and context-limit failures.
 
 ## Safety and limitations
 
@@ -105,7 +106,7 @@ Choose budgets that fit your review models' context windows. Increasing a budget
 - **Confirmation shows a model-generated summary**, not the raw command or code. It is available only when the full input was assessed and the second review provides a risk summary.
 - **Model input can contain hostile instructions.** Commands, scripts, and conversation excerpts are treated as untrusted data, but prompt-injection defenses are not a guarantee.
 - **Review data goes to your configured model providers.** Commands, code, conversation excerpts, and script contents may contain sensitive information. Credential redaction of conversation excerpts does not replace reviewing what you send to a provider.
-- **Assessment failures block execution.** Unavailable models, timeouts, and unusable verdicts do not grant permission. Oversized commands are also blocked, including with `fallback: "ask"`.
+- **Assessment failures block execution.** Unavailable models, timeouts, and unusable verdicts do not grant permission.
 
 ## Host support
 
@@ -123,7 +124,6 @@ The extension must be able to resolve the OMP executable for subprocess-based re
 | `native judge failed` | Check the judgment provider's availability and credentials. The initial assessment falls back to `@tiny` → `@smol`. |
 | `judge produced no output` | A judgment-only model may have been used without native integration. Update OMP or configure a chat-capable judge. |
 | Model timeout | Increase `timeoutMs` or choose a faster model. |
-| `too long to assess in full` | Split the command or increase `subjectMaxChars` within your model's context limit. |
 | Provider context-length error | Reduce input budgets or use a model with a larger context window. |
 | Routine commands repeatedly trigger review | Check the judge model's risk ratings and your `blockRisk` setting. Risk ratings vary between models. |
 

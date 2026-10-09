@@ -40,16 +40,6 @@ describe("defaults", () => {
     }
   });
 
-  test("DEFAULT_CONFIG pins the documented defaults", () => {
-    expect(DEFAULT_CONFIG.enabled).toBe(true);
-    expect(DEFAULT_CONFIG.display).toBe("both");
-    expect(DEFAULT_CONFIG.blockRisk).toBe("high");
-    expect(DEFAULT_CONFIG.timeoutMs).toBe(30_000);
-    expect(DEFAULT_CONFIG.idleMs).toBe(600_000);
-    expect(DEFAULT_CONFIG.subjectMaxChars).toBe(4_000);
-    expect(DEFAULT_CONFIG.contextMaxChars).toBe(3_000);
-    expect(DEFAULT_CONFIG.scriptMaxChars).toBe(4_000);
-  });
 });
 
 describe("file parsing", () => {
@@ -85,17 +75,17 @@ describe("file parsing", () => {
     }
   });
 
-  test("enabled=false and timeout/subject caps load from the file", () => {
+  test("enabled=false, unlimited timeout, and context budget load from the file", () => {
     const env = isolatedHome();
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ enabled: false, timeoutMs: 0, subjectMaxChars: 1200 }),
+        JSON.stringify({ enabled: false, timeoutMs: 0, contextMaxChars: 1200 }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       expect(store.config.enabled).toBe(false);
       expect(store.config.timeoutMs).toBe(0);
-      expect(store.config.subjectMaxChars).toBe(1200);
+      expect(store.config.contextMaxChars).toBe(1200);
     } finally {
       env.cleanup();
     }
@@ -248,7 +238,7 @@ describe("selective persist", () => {
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ subjectMaxChars: 1200, display: "marker", blockRisk: "high" }),
+        JSON.stringify({ contextMaxChars: 1200, display: "marker", blockRisk: "high" }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
       store.update({ display: "off" });
@@ -256,9 +246,26 @@ describe("selective persist", () => {
 
       const onDisk = JSON.parse(fs.readFileSync(path.join(env.agent, "auto-approve.json"), "utf-8"));
       expect(onDisk.display).toBe("off");
-      expect(onDisk.subjectMaxChars).toBe(1200); // untouched user key preserved
+      expect(onDisk.contextMaxChars).toBe(1200); // untouched user key preserved
       expect(onDisk.blockRisk).toBe("high"); // untouched enum key preserved
       expect(store.config.display).toBe("off");
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  test("retired subject limit is ignored and preserved as unknown user data", () => {
+    const env = isolatedHome();
+    try {
+      const file = path.join(env.agent, "auto-approve.json");
+      fs.writeFileSync(file, JSON.stringify({ subjectMaxChars: 1 }));
+      const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(store.config).not.toHaveProperty("subjectMaxChars");
+      store.update({ display: "off" });
+      store.persist();
+      const onDisk = JSON.parse(fs.readFileSync(file, "utf-8"));
+      expect(onDisk.subjectMaxChars).toBe(1);
+      expect(onDisk.display).toBe("off");
     } finally {
       env.cleanup();
     }

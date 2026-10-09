@@ -28,7 +28,6 @@ interface Dictionary {
   reasonDeny: string;
   reasonHighRisk: string;
   reasonMediumRisk: string;
-  reasonTruncated: string;
   reasonNoVerdict: string;
   reasonJudgeSilent: string;
   reasonNativeFailed: string;
@@ -41,7 +40,6 @@ interface Dictionary {
   deniedJudgeUnavailable: string;
   deniedNoVerdict: string;
   deniedJudgeSilent: string;
-  deniedTooLong: string;
   deniedUserDenied: string;
   deniedDeepConfirmed: string;
   headlessNote: string;
@@ -107,7 +105,6 @@ const EN: Dictionary = {
   reasonDeny: "judge declined",
   reasonHighRisk: "high risk",
   reasonMediumRisk: "medium risk",
-  reasonTruncated: "too long to assess in full",
   reasonNoVerdict: "no usable verdict",
   reasonJudgeSilent: "judge produced no output",
   reasonNativeFailed: "native judge failed",
@@ -120,7 +117,6 @@ const EN: Dictionary = {
   deniedJudgeUnavailable: "The judge model could not be consulted ({0}), so this command was blocked by the fail-closed default. Nothing was executed; the command was not assessed as dangerous. Retry once the judge is available, or use a clearly safe command.",
   deniedNoVerdict: "The judge model responded but did not produce a usable risk verdict, so this command was blocked by the fail-closed default. Nothing was executed. Retry the assessment, or use a clearly safe command.",
   deniedJudgeSilent: "The judge model produced no output at all ({0}), so this command was blocked by the fail-closed default. Nothing was executed. This usually means the judge model or its provider cannot complete a chat response — for example, a native System One / typesafe judge model reached through the chat lane because this host does not expose OMP's native judgment modules. Update OMP so the native judge is used directly, or point the `judge` role in your OMP config (models.yml / config.yml) at a chat-lane entry (e.g. an openai-completions provider), then retry.",
-  deniedTooLong: "This command is {0} characters long; the judge can only assess the first {1}, so it was blocked by the fail-closed default. Nothing was executed. Split it into shorter commands so each one can be fully assessed.",
   deniedUserDenied: "You declined this command in the review dialog. Nothing was executed. Do not re-run the same command without a new reason justifying it.",
   deniedDeepConfirmed: " A second review ({0}) also flagged it{1}.",
   headlessNote: " This session is headless (no user interface), so no confirmation dialog was shown.",
@@ -184,7 +180,6 @@ const ZH: Dictionary = {
   reasonDeny: "裁判拒绝",
   reasonHighRisk: "高风险",
   reasonMediumRisk: "中风险",
-  reasonTruncated: "过长,无法完整评估",
   reasonNoVerdict: "无可用的风险判定",
   reasonJudgeSilent: "裁判未产生任何输出",
   reasonNativeFailed: "原生裁判失败",
@@ -197,7 +192,6 @@ const ZH: Dictionary = {
   deniedJudgeUnavailable: "无法咨询裁判模型({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容;该命令未被评估为危险。请在裁判可用后重试,或改用明显安全的命令。",
   deniedNoVerdict: "裁判模型有响应,但未给出可用的风险判定,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请重试评估,或改用明显安全的命令。",
   deniedJudgeSilent: "裁判模型完全没有产生任何输出({0}),因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。这通常意味着裁判模型或其提供商无法完成一次聊天响应——例如原生 System One / typesafe 裁判模型经由聊天通道调用,因为当前宿主未提供 OMP 的原生判定模块。请更新 OMP 以直接使用原生裁判,或将 OMP 配置(models.yml / config.yml)中的 `judge` 角色指向聊天通道条目(如 openai-completions 提供商),然后重试。",
-  deniedTooLong: "该命令长达 {0} 个字符;裁判只能评估前 {1} 个字符,因此按 fail-closed 默认策略拦截了该命令。未执行任何内容。请拆分为更短的命令,使每条命令都能被完整评估。",
   deniedUserDenied: "您在确认对话框中拒绝了该命令。未执行任何内容。除非有新的依据,不要重新运行相同命令。",
   deniedDeepConfirmed: "第二轮复核({0})同样判定其有风险{1}。",
   headlessNote: "此会话为无界面(headless)会话,未弹出确认对话框。",

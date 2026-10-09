@@ -38,9 +38,6 @@ export interface AutoApproveConfig {
   /** Idle lifetime of the persistent judge child, in ms.
    *  0 = keep alive until session end. Default 10 minutes. */
   idleMs: number;
-  /** Max characters of the command sent to the judge prompt.
-   *  Default 4000. */
-  subjectMaxChars: number;
   /** Session-context budget for the judge prompts: how many characters of
    *  conversation excerpts (original task, latest request, recent plan
    *  text) the models see as background for WHY the command runs.
@@ -60,7 +57,6 @@ export const DEFAULT_CONFIG: AutoApproveConfig = {
   fallback: "block",
   timeoutMs: 30_000,
   idleMs: 600_000,
-  subjectMaxChars: 4_000,
   contextMaxChars: 3_000,
   scriptMaxChars: 4_000,
 };
@@ -81,10 +77,6 @@ export function mergeConfig(user: unknown): AutoApproveConfig {
     fallback: u.fallback === "ask" || u.fallback === "block" ? u.fallback : DEFAULT_CONFIG.fallback,
     timeoutMs: typeof u.timeoutMs === "number" && u.timeoutMs >= 0 ? u.timeoutMs : DEFAULT_CONFIG.timeoutMs,
     idleMs: typeof u.idleMs === "number" && u.idleMs >= 0 ? u.idleMs : DEFAULT_CONFIG.idleMs,
-    subjectMaxChars:
-      typeof u.subjectMaxChars === "number" && u.subjectMaxChars > 0
-        ? u.subjectMaxChars
-        : DEFAULT_CONFIG.subjectMaxChars,
     contextMaxChars:
       typeof u.contextMaxChars === "number" && u.contextMaxChars >= 0
         ? u.contextMaxChars

@@ -127,13 +127,6 @@ export function buildJudgeArgs(
   ];
 }
 
-/** Cap the command sent into a prompt so a pathological command cannot
- *  blow the model window. */
-export function truncateSubject(command: string, maxChars: number): string {
-  if (command.length <= maxChars) return command;
-  return `${command.slice(0, maxChars)}\n[... truncated: ${command.length - maxChars} more characters]`;
-}
-
 /** What kind of subject the judge prompts assess: a shell command (the
  *  bash surface) or code executed in the session process (the eval
  *  surface).  The rubric and the subject label are framed per kind so a
@@ -218,13 +211,11 @@ const JUDGE_RUBRIC_EVAL = judgeRubric("eval");
 /** Build the per-call judge prompt: static rubric (framed for the subject
  *  kind: shell command vs. eval code) + working directory (when known) +
  *  optional eval-language line + optional session-context section
- *  (untrusted conversation excerpts, see context.ts) + the subject,
- *  bounded by subjectMaxChars so a pathological subject cannot blow the
- *  window.  Callers must pass the execution cwd when the host provides
- *  one: the judge cannot know what a relative path touches without it. */
+ *  (untrusted conversation excerpts, see context.ts) + the full subject.
+ *  Callers must pass the execution cwd when the host provides one: the
+ *  judge cannot know what a relative path touches without it. */
 export function buildJudgePrompt(
   command: string,
-  subjectMaxChars: number = 4000,
   cwd?: string,
   contextSection?: string,
   scriptSection?: string,
@@ -235,7 +226,7 @@ export function buildJudgePrompt(
   const cwdLine = cwd ? `Working directory: ${cwd}\n` : "";
   const languageLine = isEval && subject.language ? `Language: ${subject.language}\n` : "";
   const subjectLabel = isEval ? "Code to judge:\n" : "Command to judge:\n";
-  return `${rubric}${cwdLine}${languageLine}${contextSection ?? ""}${scriptSection ?? ""}${subjectLabel}${truncateSubject(command, subjectMaxChars)}`;
+  return `${rubric}${cwdLine}${languageLine}${contextSection ?? ""}${scriptSection ?? ""}${subjectLabel}${command}`;
 }
 
 const DEEP_RUBRIC_SHELL = [
@@ -269,11 +260,9 @@ const DEEP_RUBRIC_EVAL = [
 
 /** Build the deep-analysis prompt: static rubric (framed for the subject
  *  kind) + working directory (when known) + optional eval-language line +
- *  optional session-context section + the subject, bounded by
- *  subjectMaxChars like the judge prompt. */
+ *  optional session-context section + the full subject. */
 export function buildDeepPrompt(
   command: string,
-  subjectMaxChars: number = 4000,
   cwd?: string,
   contextSection?: string,
   scriptSection?: string,
@@ -284,7 +273,7 @@ export function buildDeepPrompt(
   const cwdLine = cwd ? `Working directory: ${cwd}\n` : "";
   const languageLine = isEval && subject.language ? `Language: ${subject.language}\n` : "";
   const subjectLabel = isEval ? "Code to analyze:\n" : "Command to analyze:\n";
-  return `${rubric}${cwdLine}${languageLine}${contextSection ?? ""}${scriptSection ?? ""}${subjectLabel}${truncateSubject(command, subjectMaxChars)}`;
+  return `${rubric}${cwdLine}${languageLine}${contextSection ?? ""}${scriptSection ?? ""}${subjectLabel}${command}`;
 }
 
 
@@ -1174,10 +1163,10 @@ export interface DeepAnalysis {
 export async function runDeepAnalysis(
   invoker: JudgeInvoker,
   command: string,
-  opts: { subjectMaxChars?: number; cwd?: string; context?: string; script?: string; timeoutMs: number; signal?: AbortSignal; subject?: SubjectInfo },
+  opts: { cwd?: string; context?: string; script?: string; timeoutMs: number; signal?: AbortSignal; subject?: SubjectInfo },
   logger?: LoggerLike,
 ): Promise<DeepAnalysis | null> {
-  const prompt = buildDeepPrompt(command, opts.subjectMaxChars ?? 4000, opts.cwd, opts.context, opts.script, opts.subject);
+  const prompt = buildDeepPrompt(command, opts.cwd, opts.context, opts.script, opts.subject);
   for (const model of DEEP_MODELS) {
     if (opts.signal?.aborted) return null;
     let outcome: PromptOutcome | null;
@@ -1217,10 +1206,10 @@ export interface JudgeFallback {
 export async function runJudgeFallback(
   invoker: JudgeInvoker,
   command: string,
-  opts: { subjectMaxChars?: number; cwd?: string; context?: string; script?: string; timeoutMs: number; signal?: AbortSignal; subject?: SubjectInfo },
+  opts: { cwd?: string; context?: string; script?: string; timeoutMs: number; signal?: AbortSignal; subject?: SubjectInfo },
   logger?: LoggerLike,
 ): Promise<JudgeFallback | null> {
-  const prompt = buildJudgePrompt(command, opts.subjectMaxChars ?? 4000, opts.cwd, opts.context, opts.script, opts.subject);
+  const prompt = buildJudgePrompt(command, opts.cwd, opts.context, opts.script, opts.subject);
   for (const model of DEEP_MODELS) {
     if (opts.signal?.aborted) return null;
     let outcome: JudgeOutcome;

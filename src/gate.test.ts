@@ -914,68 +914,42 @@ describe("BashGate headless", () => {
   });
 });
 
-describe("BashGate over-budget commands", () => {
-  /** Deep child factory: `alive` models get a live child with prose. */
-  function deepSpecsLocal(alive: Record<string, string>): {
-    factory: (model: string) => FakeRpcChild;
-    children: FakeRpcChild[];
-  } {
-    const children: FakeRpcChild[] = [];
-    const factory = (model: string): FakeRpcChild => {
-      const child =
-        model in alive ? new FakeRpcChild({ replyText: alive[model] }) : new FakeRpcChild({ dead: true });
-      children.push(child);
-      return child;
-    };
-    return { factory, children };
+describe("full-subject review", () => {
+  for (const Gate of [BashGate, EvalGate]) {
+    test(`${Gate.name}: a long subject can be cleared by deep review`, async () => {
+      const subject = `${" ".repeat(8000)}SAFE_TAIL`;
+      const children: FakeRpcChild[] = [];
+      const factory = () => {
+        const child = new FakeRpcChild({ replyText: highVerdict });
+        children.push(child);
+        return child;
+      };
+      const deepFactory = () => {
+        const options = {
+          replyText: highVerdict,
+          onFrame: (frame: Record<string, unknown>) => {
+            if (frame.type === "prompt") {
+              options.replyText = String(frame.message).endsWith(subject) ? lowVerdict : highVerdict;
+            }
+          },
+        };
+        return new FakeRpcChild(options);
+      };
+      const rig = makeRig(factory, children, {}, deepFactory, Gate);
+      const { ctx, calls } = makeCtx();
+      try {
+        const params = Gate === BashGate ? { command: subject } : { code: subject, language: "python" };
+        const result = await rig.gate.execute(params, undefined, undefined, ctx);
+        expect(result.content[0].text).toBe("delegated");
+        expect(calls).toHaveLength(1);
+      } finally {
+        await rig.dispose();
+      }
+    });
   }
+});
 
-  /** A command longer than the 50-char assessment window used below. */
-  const longCommand = `run the batch: ${"x".repeat(490)}`;
-  test("an allow verdict cannot approve a command the judge only saw in part", async () => {
-    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
-    const rig = makeRig(factory, children, {});
-    rig.store.config.subjectMaxChars = 50;
-    const { ctx, calls } = makeCtx();
-    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    expect(calls).toHaveLength(0);
-    const details = result.details as { reason?: string; length?: number; subjectMaxChars?: number } | undefined;
-    expect(details?.reason).toBe("truncated");
-    expect(details?.length).toBe(longCommand.length);
-    expect(details?.subjectMaxChars).toBe(50);
-    expect(result.content[0].text).toContain("characters long");
-    await rig.dispose();
-  });
-
-  test("an over-budget command cannot be approved from a partial summary under fallback=ask", async () => {
-    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
-    const deep = deepSpecsLocal({ "@tiny": "prose about the long command" });
-    const rig = makeRig(factory, children, { fallback: "ask" }, deep.factory);
-    rig.store.config.subjectMaxChars = 50;
-    const { ctx, calls, dialogs } = makeCtx({ select: async (_title, choices) => choices[0] });
-    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    expect(result.details).toMatchObject({ reason: "truncated" });
-    expect(calls).toHaveLength(0);
-    expect(dialogs).toHaveLength(0);
-    expect(deep.children).toHaveLength(0);
-    await rig.dispose();
-  });
-
-  test("fallback=block: an over-budget command blocks as too long without a deep review", async () => {
-    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
-    const deep = deepSpecsLocal({ "@tiny": '{"risk":"low","recommend":"allow","summary":"looks fine"}' });
-    const rig = makeRig(factory, children, { fallback: "block" }, deep.factory);
-    rig.store.config.subjectMaxChars = 50;
-    const { ctx, calls } = makeCtx({ hasUI: false });
-    const result = await rig.gate.execute({ command: longCommand }, undefined, undefined, ctx);
-    expect(calls).toHaveLength(0);
-    expect(deep.children).toHaveLength(0); // a deep clear could never authorize it
-    expect(result.details).toMatchObject({ reason: "truncated" });
-    await rig.dispose();
-  });
-
+describe("BashGate unusable judge responses", () => {
   test("an unparseable judge response blocks with a no-verdict explanation", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: "I think this is fine." }], {});
     const rig = makeRig(factory, children);
@@ -1021,18 +995,6 @@ describe("BashGate over-budget commands", () => {
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
     expect(result.content[0].text).toContain("reasoning-only output");
-    await rig.dispose();
-  });
-
-  test("a short command at exactly the cap is still auto-approved", async () => {
-    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
-    const rig = makeRig(factory, children, {});
-    rig.store.config.subjectMaxChars = 50;
-    const exact = "y".repeat(50);
-    const { ctx, calls } = makeCtx();
-    const result = await rig.gate.execute({ command: exact }, undefined, undefined, ctx);
-    expect(result.isError ?? false).toBe(false);
-    expect(calls).toHaveLength(1);
     await rig.dispose();
   });
 });
@@ -1270,18 +1232,58 @@ describe("native judge tier", () => {
     await rig.dispose();
   });
 
-  test("a native allow cannot approve a subject longer than the assessment window", async () => {
+  test("a native verdict can approve a long subject without a plugin length denial", async () => {
+    const command = `echo ${"x".repeat(8000)}`;
     const rpc = recordingFactory({ dead: true });
-    const { native } = nativeJudge(async () => nativeResult("low"));
+    const { native } = nativeJudge(async (request) => nativeResult(request.state.command === command ? "low" : "high"));
     const rig = makeRig(rpc.factory, rpc.children, {}, undefined, BashGate, native);
-    rig.store.config.subjectMaxChars = 50;
     const { ctx, calls } = makeCtx();
-    const result = await rig.gate.execute({ command: `echo ${"x".repeat(100)}` }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    expect(calls).toHaveLength(0);
-    expect(result.details).toMatchObject({ reason: "truncated" });
-    await rig.dispose();
+    try {
+      const result = await rig.gate.execute({ command }, undefined, undefined, ctx);
+      expect(result.content[0].text).toBe("delegated");
+      expect(calls).toHaveLength(1);
+      expect(rpc.models).toEqual([]);
+    } finally {
+      await rig.dispose();
+    }
   });
+
+  for (const Gate of [BashGate, EvalGate]) {
+    test(`${Gate.name}: native capacity failure falls back with the complete long subject`, async () => {
+      const subject = `${" ".repeat(8000)}TAIL_MUST_BE_ASSESSED`;
+      const models: string[] = [];
+      const children: FakeRpcChild[] = [];
+      const factory = (model: string) => {
+        models.push(model);
+        const options = {
+          promptRejectError: model === "@tiny" ? "context length exceeded" : undefined,
+          replyText: highVerdict,
+          onFrame: (frame: Record<string, unknown>) => {
+            if (frame.type === "prompt") {
+              options.replyText = String(frame.message).endsWith(subject) ? lowVerdict : highVerdict;
+            }
+          },
+        };
+        const child = new FakeRpcChild(options);
+        children.push(child);
+        return child;
+      };
+      const { native } = nativeJudge(async () => {
+        throw new Error("context length exceeded");
+      });
+      const rig = makeRig(factory, children, {}, undefined, Gate, native);
+      const { ctx, calls } = makeCtx();
+      try {
+        const params = Gate === BashGate ? { command: subject } : { code: subject, language: "python" };
+        const result = await rig.gate.execute(params, undefined, undefined, ctx);
+        expect(result.content[0].text).toBe("delegated");
+        expect(calls).toHaveLength(1);
+        expect(models).toEqual(["@tiny", "@smol"]);
+      } finally {
+        await rig.dispose();
+      }
+    });
+  }
 
   test("the native judgment describes the execution cwd of a bash call", async () => {
     const rpc = recordingFactory({ replyText: lowVerdict });

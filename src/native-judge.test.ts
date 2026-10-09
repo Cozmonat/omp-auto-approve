@@ -42,11 +42,11 @@ const hangingLane: NativeLane = {
     return promise;
   },
 };
-const request = buildNativeJudgment("ls -la", { subjectMaxChars: 4000, cwd: "/w" });
+const request = buildNativeJudgment("ls -la", { cwd: "/w" });
 
 describe("buildNativeJudgment", () => {
   test("shell subject: state carries the command and cwd, empty sections are omitted", () => {
-    const req = buildNativeJudgment("ls -la", { subjectMaxChars: 4000, cwd: "/w", context: "", script: "" });
+    const req = buildNativeJudgment("ls -la", { cwd: "/w", context: "", script: "" });
     expect(req.state).toEqual({ command: "ls -la", cwd: "/w" });
     expect(req.questions.risk.type).toBe("choice");
     expect(Object.keys(req.questions.risk.criteria).sort()).toEqual(["high", "low", "medium"]);
@@ -54,7 +54,6 @@ describe("buildNativeJudgment", () => {
 
   test("eval subject is framed as code with its language", () => {
     const req = buildNativeJudgment("print(1)", {
-      subjectMaxChars: 4000,
       cwd: "/w",
       subject: { kind: "eval", language: "python" },
     });
@@ -62,13 +61,8 @@ describe("buildNativeJudgment", () => {
   });
 
   test("session context and referenced scripts ride along in the state", () => {
-    const req = buildNativeJudgment("./run.sh", { subjectMaxChars: 4000, context: "CTX\n", script: "SCR\n" });
+    const req = buildNativeJudgment("./run.sh", { context: "CTX\n", script: "SCR\n" });
     expect(req.state).toEqual({ command: "./run.sh", context: "CTX\n", scripts: "SCR\n" });
-  });
-
-  test("the subject is capped at subjectMaxChars", () => {
-    const req = buildNativeJudgment("x".repeat(20), { subjectMaxChars: 5 });
-    expect(req.state.command).toBe("xxxxx\n[... truncated: 15 more characters]");
   });
 
 });

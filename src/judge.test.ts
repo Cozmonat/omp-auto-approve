@@ -135,32 +135,23 @@ describe("parseJudgeVerdict", () => {
 });
 
 describe("buildJudgePrompt", () => {
-  test("truncates commands over subjectMaxChars", () => {
-    const long = "a".repeat(5000);
-    const bounded = buildJudgePrompt(long, 100);
-    const unbounded = buildJudgePrompt(long, 100_000);
-    expect(bounded).not.toContain(long);
-    expect(bounded).toContain("truncated");
-    expect(bounded.length).toBeLessThan(unbounded.length);
-  });
-
   test("includes the working directory when provided, omits it otherwise", () => {
-    expect(buildJudgePrompt("ls", 4000, "/work/repo")).toContain("Working directory: /work/repo");
-    expect(buildJudgePrompt("ls", 4000)).not.toContain("Working directory");
+    expect(buildJudgePrompt("ls", "/work/repo")).toContain("Working directory: /work/repo");
+    expect(buildJudgePrompt("ls")).not.toContain("Working directory");
   });
 
   test("inserts the session-context section before the command, omits it otherwise", () => {
-    const prompt = buildJudgePrompt("ls", 4000, "/work", "CONTEXT_SECTION");
+    const prompt = buildJudgePrompt("ls", "/work", "CONTEXT_SECTION");
     expect(prompt).toContain("CONTEXT_SECTION");
     expect(prompt.indexOf("CONTEXT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
-    expect(buildJudgePrompt("ls", 4000, "/work")).not.toContain("CONTEXT_SECTION");
+    expect(buildJudgePrompt("ls", "/work")).not.toContain("CONTEXT_SECTION");
   });
 
   test("inserts the script-contents section before the command, omits it otherwise", () => {
-    const prompt = buildJudgePrompt("bash run.sh", 4000, "/work", undefined, "SCRIPT_SECTION");
+    const prompt = buildJudgePrompt("bash run.sh", "/work", undefined, "SCRIPT_SECTION");
     expect(prompt).toContain("SCRIPT_SECTION");
     expect(prompt.indexOf("SCRIPT_SECTION")).toBeLessThan(prompt.indexOf("Command to judge:"));
-    expect(buildJudgePrompt("bash run.sh", 4000, "/work")).not.toContain("SCRIPT_SECTION");
+    expect(buildJudgePrompt("bash run.sh", "/work")).not.toContain("SCRIPT_SECTION");
   });
 
 });
@@ -425,30 +416,23 @@ describe("deep analysis", () => {
     expect(buildDeepPrompt("ls")).toContain("single JSON object");
   });
 
-  test("buildDeepPrompt truncates commands over subjectMaxChars", () => {
-    const long = "b".repeat(5000);
-    const bounded = buildDeepPrompt(long, 100);
-    expect(bounded).not.toContain(long);
-    expect(bounded).toContain("truncated");
-  });
-
   test("includes the working directory when provided, omits it otherwise", () => {
-    expect(buildDeepPrompt("rm -rf /tmp/x", 4000, "/scratch")).toContain("Working directory: /scratch");
+    expect(buildDeepPrompt("rm -rf /tmp/x", "/scratch")).toContain("Working directory: /scratch");
     expect(buildDeepPrompt("rm -rf /tmp/x")).not.toContain("Working directory");
   });
 
   test("inserts the session-context section before the command, omits it otherwise", () => {
-    const prompt = buildDeepPrompt("ls", 4000, "/scratch", "CONTEXT_SECTION");
+    const prompt = buildDeepPrompt("ls", "/scratch", "CONTEXT_SECTION");
     expect(prompt).toContain("CONTEXT_SECTION");
     expect(prompt.indexOf("CONTEXT_SECTION")).toBeLessThan(prompt.indexOf("Command to analyze:"));
-    expect(buildDeepPrompt("ls", 4000, "/scratch")).not.toContain("CONTEXT_SECTION");
+    expect(buildDeepPrompt("ls", "/scratch")).not.toContain("CONTEXT_SECTION");
   });
 
   test("inserts the script-contents section before the command, omits it otherwise", () => {
-    const prompt = buildDeepPrompt("bash run.sh", 4000, "/scratch", undefined, "SCRIPT_SECTION");
+    const prompt = buildDeepPrompt("bash run.sh", "/scratch", undefined, "SCRIPT_SECTION");
     expect(prompt).toContain("SCRIPT_SECTION");
     expect(prompt.indexOf("SCRIPT_SECTION")).toBeLessThan(prompt.indexOf("Command to analyze:"));
-    expect(buildDeepPrompt("bash run.sh", 4000, "/scratch")).not.toContain("SCRIPT_SECTION");
+    expect(buildDeepPrompt("bash run.sh", "/scratch")).not.toContain("SCRIPT_SECTION");
   });
 
   test("rubric tells the analyst to analyse multi-line scripts and provided script contents", () => {

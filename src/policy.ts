@@ -12,10 +12,8 @@ import type { JudgeVerdict } from "./types";
 /** One resolved auto-approve verdict. */
 export interface PolicyDecision {
   verdict: "allow" | "block";
-  /** Stable machine id for logging; not user-facing. `truncated` is
-   *  synthesized by the gate: the command was longer than the judge's
-   *  assessment window, so even an "allow" verdict cannot authorize it. */
-  reason: "ai-risk" | "ai-recommend" | "fallback" | "truncated";
+  /** Stable machine id for logging; not user-facing. */
+  reason: "ai-risk" | "ai-recommend" | "fallback";
 }
 
 /**

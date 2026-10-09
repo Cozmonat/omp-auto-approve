@@ -173,11 +173,10 @@ function riskLabel(t: I18n, risk: JudgeVerdict["risk"] | undefined): string {
 /** Localized human reason for a blocked verdict. */
 function blockReasonText(
   t: I18n,
-  decisionReason: "ai-risk" | "ai-recommend" | "fallback" | "truncated",
+  decisionReason: "ai-risk" | "ai-recommend" | "fallback",
   verdict: JudgeVerdict | null,
   outcome: JudgeOutcome,
 ): string {
-  if (decisionReason === "truncated") return t.format("reasonTruncated");
   if (decisionReason === "fallback") {
     // Empty means the judge answered but produced no usable verdict —
     // saying "unavailable" would mislead the model (and the user) about
@@ -280,7 +279,6 @@ export class ToolGate {
       outcome = await assessNative(
         lane,
         buildNativeJudgment(subject, {
-          subjectMaxChars: cfg.subjectMaxChars,
           cwd: execCwd,
           context: contextSection,
           script: scriptSection,
@@ -293,7 +291,7 @@ export class ToolGate {
       try {
         outcome = await invoker.assess(
           JUDGE_MODEL,
-          buildJudgePrompt(subject, cfg.subjectMaxChars, execCwd, contextSection, scriptSection, subjectInfo),
+          buildJudgePrompt(subject, execCwd, contextSection, scriptSection, subjectInfo),
           { timeoutMs: cfg.timeoutMs, signal },
         );
       } catch (e) {
@@ -339,7 +337,7 @@ export class ToolGate {
       const fallback = await runJudgeFallback(
         invoker,
         subject,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
+        { cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
         logger,
       );
       if (signal?.aborted) {
@@ -356,15 +354,7 @@ export class ToolGate {
     }
 
     const verdict = outcome.kind === "verdict" ? outcome.verdict : null;
-    let decision = decide(verdict, cfg.blockRisk);
-    // A prefix-only assessment cannot authorize execution. With the raw
-    // subject hidden from the dialog, a human cannot review the unseen tail
-    // either, so over-budget subjects always fail closed.
-    const overBudget = subject.length > cfg.subjectMaxChars;
-    if (overBudget && outcome.kind === "verdict") {
-      decision = { verdict: "block", reason: "truncated" };
-      log(`subject exceeds assessment window (${subject.length} > ${cfg.subjectMaxChars}), overriding verdict`);
-    }
+    const decision = decide(verdict, cfg.blockRisk);
     log(`decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
     // Kept lane note: the verdict came from a fallback model because the
@@ -394,12 +384,11 @@ export class ToolGate {
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
-    // A real first-pass risk verdict receives a deep review when the full
-    // subject was assessed. A deep clear auto-approves; a deep flag can be
-    // shown to the user under fallback=ask. Missing analysis or a subject
-    // beyond the assessment window cannot produce an approvable dialog.
+    // A real first-pass risk verdict receives a deep review. A deep clear
+    // auto-approves; a deep flag can be shown to the user under fallback=ask.
+    // Missing analysis cannot produce an approvable dialog.
     const canAsk = cfg.fallback === "ask" && ctx.hasUI;
-    const deepEscalation = outcome.kind === "verdict" && !overBudget;
+    const deepEscalation = outcome.kind === "verdict";
     if (outcome.kind !== "verdict") {
       log(`first pass produced no verdict (outcome=${outcome.kind}); blocking without deep analysis`);
     }
@@ -409,7 +398,7 @@ export class ToolGate {
       deep = await runDeepAnalysis(
         deepInvoker,
         subject,
-        { subjectMaxChars: cfg.subjectMaxChars, cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
+        { cwd: execCwd, context: contextSection, script: scriptSection, timeoutMs: cfg.timeoutMs, signal, subject: subjectInfo },
         logger,
       );
       if (signal?.aborted) {
@@ -465,7 +454,7 @@ export class ToolGate {
     // denial text below still carries the fallback verdict's reason when
     // one exists.
     const reasonText =
-      laneFailure && decision.reason !== "truncated"
+      laneFailure
         ? t.format(laneFailure === "native" ? "reasonNativeFailed" : "reasonJudgeSilent")
         : blockReasonText(t, decision.reason, verdict, outcome);
     // A deep review that also flagged the subject is named in the denial, so
@@ -481,7 +470,7 @@ export class ToolGate {
     if (deep) {
       log(`deep analysis (${deep.model}) did not clear the subject (risk=${deep.verdict?.risk ?? "unknown"}); blocking`);
     }
-    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, subject.length, cfg.subjectMaxChars, deepNote);
+    const denialText = this.denialText(t, decision.reason, verdict, outcome, ctx.hasUI, deepNote);
     if (surfaces.marker) {
       onUpdate?.({ content: [{ type: "text", text: t.format("markerBlocked", reasonText) }] });
     }
@@ -496,9 +485,6 @@ export class ToolGate {
       ...(verdict?.risk ? { risk: verdict.risk } : {}),
       ...(verdict?.summary ? { finding: verdict.summary } : {}),
       ...(outcome.kind === "error" ? { category: outcome.category } : {}),
-      ...(decision.reason === "truncated"
-        ? { length: subject.length, subjectMaxChars: cfg.subjectMaxChars }
-        : {}),
       ...(deep ? { analysis: deep.text, deepModel: deep.model } : {}),
     });
   }
@@ -534,12 +520,10 @@ export class ToolGate {
    *  model never mistakes a fail-closed block for a user decision. */
   private denialText(
     t: I18n,
-    decisionReason: "ai-risk" | "ai-recommend" | "fallback" | "truncated",
+    decisionReason: "ai-risk" | "ai-recommend" | "fallback",
     verdict: JudgeVerdict | null,
     outcome: JudgeOutcome,
     hasUI: boolean,
-    subjectLength?: number,
-    subjectMaxChars?: number,
     deepNote: string = "",
   ): string {
     let text: string;
@@ -551,8 +535,6 @@ export class ToolGate {
         riskLabel(t, verdict?.risk),
         verdict?.summary ? `: ${verdict.summary}` : "",
       );
-    } else if (decisionReason === "truncated") {
-      text = t.format("deniedTooLong", String(subjectLength ?? ""), String(subjectMaxChars ?? ""));
     } else if (outcome.kind === "empty") {
       // Two distinct failures: the model answered but the text was
       // unparseable (retrying may help), or the model produced no text at
