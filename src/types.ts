@@ -17,6 +17,14 @@ export interface AutocompleteItem {
 
 /** The pi/omp extension API surface used by this extension. */
 export interface ExtensionAPI {
+  /** Preserve the host's prompt representation, including legacy pi strings. */
+  on(
+    event: "before_agent_start",
+    handler: (
+      event: { systemPrompt: string[] | string },
+      ctx: ExtensionCtx,
+    ) => void | { systemPrompt: string[] | string } | Promise<void | { systemPrompt: string[] | string }>,
+  ): void;
   on(
     event: "tool_call" | "session_shutdown",
     handler: (

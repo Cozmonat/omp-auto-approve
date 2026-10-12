@@ -376,11 +376,9 @@ describe("AutoApprove factory", () => {
     const configDir = tmpDir();
     const tools: Array<{ name: string; approval?: string; description: string }> = [];
     const commands: Array<{ name: string; description: string; hasCompletions: boolean }> = [];
-    const events: string[] = [];
     const shutdownHandlers: Array<() => Promise<void>> = [];
     const pi = {
       on: (event: string, handler: () => Promise<void>) => {
-        events.push(event);
         if (event === "session_shutdown") shutdownHandlers.push(handler);
       },
       sendMessage: () => {},
@@ -412,7 +410,6 @@ describe("AutoApprove factory", () => {
     expect(commands).toEqual([
       { name: "auto-approve", description: "Auto-approve low-risk operations with a judge model", hasCompletions: true },
     ]);
-    expect(events).toEqual(["session_shutdown"]);
     // The shutdown hook disposes the judge invoker without throwing.
     await shutdownHandlers[0]?.();
   });

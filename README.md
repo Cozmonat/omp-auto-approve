@@ -71,6 +71,8 @@ Use these commands without restarting OMP. Changes persist, and command argument
 
 Blocked results remain visible even with `display: "off"`. Turning the extension off bypasses all model review; it does not make commands safer.
 
+While enabled, Auto Approve appends safe-call guidance to the agent's system prompt before each request, preserving the host's existing instructions. It encourages inspection before mutation, explicit targets, and bounded, reversible changes, and forbids evading a denial through another tool or weakening the classifier. Assessment failures are distinguished from unsafe-operation verdicts. Runtime on/off changes affect guidance starting with the next request; disabling does not retract instructions from an already-running request. Guidance is advisory, not a guarantee of approval or safety.
+
 ## Configuration
 
 Optional settings live in `~/.omp/agent/auto-approve.json`. Missing values use the defaults below. Runtime commands create the file when needed and update only the changed key.

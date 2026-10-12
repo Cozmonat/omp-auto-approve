@@ -24,6 +24,14 @@ import { ModeManager, DISPLAY_VALUES, BLOCK_RISK_VALUES, FALLBACK_VALUES } from 
 import { BashGate, EvalGate, type ToolGate } from "./gate";
 import { SessionContextGatherer } from "./context";
 
+const SAFE_CALL_GUIDANCE = `Auto Approve reviews bash and eval before execution. A rejected call did not execute. Assessment failures also block execution; they are not evidence that the requested operation is unsafe.
+
+Prefer inspection before mutation, explicit working directories and targets, and bounded, reversible changes. Use dedicated read/search/edit tools for their intended operations rather than opaque shell or eval scripts. Keep executable code understandable and avoid bundling unrelated side effects.
+
+Treat destructive changes, privilege escalation, secret exposure, unreviewed code execution, and production writes as sensitive. Establish user intent and inspect the affected resources before proposing such actions.
+
+After denial, use its reason to choose a genuinely safer approach. Do not conceal the action, split it to evade review, route the same denied operation through another tool, or disable or weaken the classifier. If no safe authorized approach exists, report the blocker. Headless sessions cannot obtain an approval dialog.`;
+
 /** Test seams for the extension factory. */
 export interface AutoApproveOptions {
   logger?: LoggerLike;
@@ -192,7 +200,7 @@ export function registerAutoApproveCommand(
  *
  * Thin by design: each concern lives in its own module; this class only
  * constructs the collaborators and registers the shadowed bash and eval
- * tools, the slash command, and the session-shutdown hook.  It ALWAYS
+ * tools, the slash command, system guidance, and the shutdown hook. It ALWAYS
  * registers — the enabled flag gates behavior per call, so
  * `/auto-approve` can toggle it at runtime in a host that loaded the
  * plugin with enabled=false.
@@ -249,10 +257,18 @@ export class AutoApprove {
     this.gates = [new BashGate(gateDeps), new EvalGate(gateDeps)];
   }
 
-  /** Register the shadowed bash and eval tools, slash command, and shutdown hook. */
+  /** Register tools, runtime controls, per-request guidance, and cleanup. */
   register(): void {
     for (const gate of this.gates) gate.register(this.pi);
     registerAutoApproveCommand(this.pi, this.modeManager, this.t, this.nativeJudge);
+    this.pi.on("before_agent_start", (event) => {
+      if (!this.modeManager.isEnabled()) return;
+      return {
+        systemPrompt: typeof event.systemPrompt === "string"
+          ? `${event.systemPrompt}\n\n${SAFE_CALL_GUIDANCE}`
+          : [...event.systemPrompt, SAFE_CALL_GUIDANCE],
+      };
+    });
     this.pi.on("session_shutdown", async () => {
       if (this.disposed) return;
       this.disposed = true;
