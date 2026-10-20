@@ -48,10 +48,10 @@ describe("file parsing", () => {
     try {
       fs.writeFileSync(
         path.join(env.agent, "auto-approve.json"),
-        JSON.stringify({ display: "marker", blockRisk: "medium", timeoutMs: 1200 }),
+        JSON.stringify({ display: "toast", blockRisk: "medium", timeoutMs: 1200 }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
-      expect(store.config.display).toBe("marker");
+      expect(store.config.display).toBe("toast");
       expect(store.config.blockRisk).toBe("medium");
       expect(store.config.timeoutMs).toBe(1200);
     } finally {
@@ -151,6 +151,9 @@ describe("displaySurfaces", () => {
   test("marker shows only the in-tool marker", () => {
     expect(displaySurfaces({ display: "marker" })).toEqual({ marker: true, notify: false });
   });
+  test("toast shows only the assessment toast", () => {
+    expect(displaySurfaces({ display: "toast" })).toEqual({ marker: false, notify: true });
+  });
   test("both shows the marker and the assessment toast", () => {
     expect(displaySurfaces({ display: "both" })).toEqual({ marker: true, notify: true });
   });
@@ -206,11 +209,11 @@ describe("host plugin settings", () => {
       fs.writeFileSync(
         path.join(pluginsDir, "omp-plugins.lock.json"),
         JSON.stringify({
-          settings: { "auto-approve": { display: "off", blockRisk: "medium", enabled: false } },
+          settings: { "auto-approve": { display: "toast", blockRisk: "medium", enabled: false } },
         }),
       );
       const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
-      expect(store.config.display).toBe("off");
+      expect(store.config.display).toBe("toast");
       expect(store.config.enabled).toBe(false);
       expect(store.config.blockRisk).toBe("medium");
     } finally {
@@ -353,7 +356,7 @@ describe("package.json settings schema parity", () => {
       expect(spec?.default).toBe(runtimeDefault);
     }
     // Enum specs must list exactly the values the merge accepts.
-    expect(settings.display?.values).toEqual(["off", "marker", "both"]);
+    expect(settings.display?.values).toEqual(["off", "marker", "toast", "both"]);
     expect(settings.blockRisk?.values).toEqual(["medium", "high"]);
     expect(settings.fallback?.values).toEqual(["ask", "block"]);
     expect(settings.enabled?.type).toBe("boolean");

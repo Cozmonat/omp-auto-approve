@@ -92,6 +92,7 @@ export function createAutoApproveCompletionProvider(
   const displayCompletions: readonly AutocompleteItem[] = [
     { value: "display off", label: "off", description: t.format("cmdDisplayOffDescription") },
     { value: "display marker", label: "marker", description: t.format("cmdDisplayMarkerDescription") },
+    { value: "display toast", label: "toast", description: t.format("cmdDisplayToastDescription") },
     { value: "display both", label: "both", description: t.format("cmdDisplayBothDescription") },
   ];
   const riskCompletions: readonly AutocompleteItem[] = [

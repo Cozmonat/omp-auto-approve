@@ -210,6 +210,12 @@ describe("/auto-approve handler", () => {
     ({ ctx, messages } = makeCommandCtx());
     await runCommand(modeManager, cmd.handler, "display loud", ctx);
     expect(messages[0]).toContain("usage: /auto-approve");
+    expect(messages[0]).toContain("display <off|marker|toast|both>");
+
+    ({ ctx, messages } = makeCommandCtx());
+    await runCommand(modeManager, cmd.handler, "display toast", ctx);
+    expect(messages).toEqual(["display set to toast."]);
+    expect(new ConfigStore(quietLogger, configDir).config.display).toBe("toast");
   });
 
   test("risk <level> validates, switches, and persists", async () => {
@@ -315,7 +321,7 @@ describe("completion provider", () => {
   test("empty prefix lists root items alphabetically (en)", () => {
     const items = createAutoApproveCompletionProvider(createI18n("en"))("");
     expect(items?.map((i) => i.value)).toEqual(["display", "fallback", "off", "on", "risk", "status"]);
-    expect(items?.[0]?.description).toBe("set where approval markers appear (off|marker|both)");
+    expect(items?.[0]?.description).toBe("set where approval markers appear (off|marker|toast|both)");
   });
 
   test("empty prefix lists root items alphabetically (zh)", () => {
@@ -331,10 +337,16 @@ describe("completion provider", () => {
     expect(provider("zzz")).toBeNull();
   });
 
-  test("display <prefix> lists the three display values", () => {
+  test("display <prefix> lists the four display values", () => {
     const provider = createAutoApproveCompletionProvider(t);
-    expect(provider("display ")?.map((i) => i.value)).toEqual(["display off", "display marker", "display both"]);
+    expect(provider("display ")?.map((i) => i.value)).toEqual([
+      "display off",
+      "display marker",
+      "display toast",
+      "display both",
+    ]);
     expect(provider("display ma")?.map((i) => i.value)).toEqual(["display marker"]);
+    expect(provider("display t")?.map((i) => i.value)).toEqual(["display toast"]);
     expect(provider("display nope")).toBeNull();
   });
 

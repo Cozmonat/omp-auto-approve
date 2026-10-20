@@ -246,6 +246,25 @@ describe("BashGate", () => {
     await rig.dispose();
   });
 
+  test("display=toast shows the approval toast without tool-card lines", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
+    const rig = makeRig(factory, children, { display: "toast" });
+    const updates: string[] = [];
+    const { ctx, calls, notifications } = makeCtx();
+    await rig.gate.execute(
+      { command: "ls" },
+      undefined,
+      (u: Update) => pushUpdates(updates, u),
+      ctx,
+    );
+    expect(calls).toHaveLength(1);
+    expect(updates).toHaveLength(0);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.level).toBe("info");
+    expect(notifications[0]?.msg).toContain("Auto-approved");
+    await rig.dispose();
+  });
+
   test("missing ctx.invokeTool produces a structured error", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
     const rig = makeRig(factory, children);

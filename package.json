@@ -42,11 +42,12 @@
       },
       "display": {
         "default": "both",
-        "description": "Where approval markers appear: off (silent approvals), marker (marker line inside the tool call), both (marker + assessment-result toast). Blocked verdicts are always visible.",
+        "description": "Where approval markers appear: off (silent approvals), marker (marker line inside the tool call), toast (assessment-result toast only), both (marker + assessment-result toast). Blocked verdicts are always visible.",
         "type": "enum",
         "values": [
           "off",
           "marker",
+          "toast",
           "both"
         ]
       },
@@ -77,5 +78,5 @@
     "test": "bun test src",
     "typecheck": "tsc --noEmit"
   },
-  "version": "1.6.1"
+  "version": "1.7.0"
 }

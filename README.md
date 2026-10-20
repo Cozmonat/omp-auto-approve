@@ -60,6 +60,7 @@ Use these commands without restarting OMP. Changes persist, and command argument
 /auto-approve display           # show the current display mode
 /auto-approve display off       # hide approval markers and toasts
 /auto-approve display marker    # show a marker inside the tool call
+/auto-approve display toast     # show only the result toast
 /auto-approve display both      # show a marker and result toast (default)
 
 /auto-approve risk              # show the current risk threshold
@@ -82,7 +83,7 @@ Optional settings live in `~/.omp/agent/auto-approve.json`. Missing values use t
 | Key | Default | Purpose |
 |---|---|---|
 | `enabled` | `true` | Enable review of bash and eval. `false` passes through to the built-in tools. |
-| `display` | `"both"` | Approval feedback: `"off"`, `"marker"`, or `"both"`. Blocked results are always visible. |
+| `display` | `"both"` | Approval feedback: `"off"`, `"marker"`, `"toast"`, or `"both"`. Blocked results are always visible. |
 | `blockRisk` | `"high"` | Minimum risk rating that triggers second review: `"medium"` or `"high"`. |
 | `fallback` | `"block"` | For operations still flagged after second review: `"block"` denies; `"ask"` offers confirmation when an interactive UI and risk summary are available. |
 | `timeoutMs` | `30000` | Timeout in milliseconds for each model attempt. `0` disables the timeout. |

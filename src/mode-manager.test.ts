@@ -41,10 +41,10 @@ describe("ModeManager", () => {
   });
 
   test("setDisplay applies and persists", () => {
-    manager.setDisplay("marker");
-    expect(manager.getDisplay()).toBe("marker");
+    manager.setDisplay("toast");
+    expect(manager.getDisplay()).toBe("toast");
     const onDisk = JSON.parse(fs.readFileSync(store.configPath, "utf-8"));
-    expect(onDisk.display).toBe("marker");
+    expect(onDisk.display).toBe("toast");
   });
 
   test("setBlockRisk applies and persists", () => {

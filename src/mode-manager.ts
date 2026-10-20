@@ -8,7 +8,7 @@
 
 import type { BlockRisk, ConfigStore, DisplayMode, FallbackMode } from "./config";
 
-export const DISPLAY_VALUES: readonly DisplayMode[] = ["off", "marker", "both"];
+export const DISPLAY_VALUES: readonly DisplayMode[] = ["off", "marker", "toast", "both"];
 export const BLOCK_RISK_VALUES: readonly BlockRisk[] = ["medium", "high"];
 export const FALLBACK_VALUES: readonly FallbackMode[] = ["ask", "block"];
 

@@ -21,9 +21,9 @@
  * finding / judge unavailable, and a headless note) so it can choose a
  * safer alternative.
  *
- * Surfaces per display setting: marker = streamed tool-card line,
- * notify = chat toast (UI sessions only).  Blocked verdicts are always
- * toasted regardless of the display setting.
+ * Surfaces per display setting: marker = streamed tool-card line (including
+ * the "analyzing" status), notify = chat toast (UI sessions only).  Blocked
+ * verdicts are always toasted regardless of the display setting.
  */
 import {
   buildJudgePrompt,
@@ -252,7 +252,7 @@ export class ToolGate {
     }
 
     const surfaces = displaySurfaces(cfg);
-    if (surfaces.marker || surfaces.notify) {
+    if (surfaces.marker) {
       onUpdate?.({
         content: [{ type: "text", text: t.format(subjectInfo.kind === "eval" ? "analyzingEval" : "analyzing") }],
       });

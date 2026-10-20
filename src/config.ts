@@ -15,7 +15,7 @@ import type { LoggerLike } from "./types";
 
 /** Where approval markers appear for auto-approved operations.
  *  Blocked verdicts are always visible regardless of this setting. */
-export type DisplayMode = "off" | "marker" | "both";
+export type DisplayMode = "off" | "marker" | "toast" | "both";
 /** Minimum judge risk level that blocks an operation. */
 export type BlockRisk = "medium" | "high";
 /** Policy for crossed risk thresholds and unusable verdicts. */
@@ -24,7 +24,7 @@ export type FallbackMode = "ask" | "block";
 export interface AutoApproveConfig {
   /** Master switch. false = pass-through to the native bash tool. */
   enabled: boolean;
-  /** Where approval markers appear: off | marker | both. */
+  /** Where approval markers appear: off | marker | toast | both. */
   display: DisplayMode;
   /** Judge risk level at or above which an operation is blocked. */
   blockRisk: BlockRisk;
@@ -70,7 +70,7 @@ export function mergeConfig(user: unknown): AutoApproveConfig {
   return {
     enabled: typeof u.enabled === "boolean" ? u.enabled : DEFAULT_CONFIG.enabled,
     display:
-      u.display === "off" || u.display === "marker" || u.display === "both"
+      u.display === "off" || u.display === "marker" || u.display === "toast" || u.display === "both"
         ? u.display
         : DEFAULT_CONFIG.display,
     blockRisk: u.blockRisk === "medium" ? "medium" : DEFAULT_CONFIG.blockRisk,
@@ -158,7 +158,7 @@ function applyHostSettings(
     config.enabled = host.enabled;
     applied.push("enabled");
   }
-  if (host.display === "off" || host.display === "marker" || host.display === "both") {
+  if (host.display === "off" || host.display === "marker" || host.display === "toast" || host.display === "both") {
     config.display = host.display;
     applied.push("display");
   }
@@ -181,6 +181,7 @@ export function displaySurfaces(
 ): { marker: boolean; notify: boolean } {
   if (config.display === "off") return { marker: false, notify: false };
   if (config.display === "marker") return { marker: true, notify: false };
+  if (config.display === "toast") return { marker: false, notify: true };
   return { marker: true, notify: true };
 }
 

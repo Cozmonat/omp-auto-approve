@@ -54,6 +54,7 @@ interface Dictionary {
   cmdRiskDescription: string;
   cmdDisplayOffDescription: string;
   cmdDisplayMarkerDescription: string;
+  cmdDisplayToastDescription: string;
   cmdDisplayBothDescription: string;
   cmdRiskMediumDescription: string;
   cmdRiskHighDescription: string;
@@ -75,13 +76,13 @@ const EN: Dictionary = {
   help: [
     "auto-approve — judge-model auto-approval for bash and eval",
     "",
-    "usage: /auto-approve [on|off|status|display <off|marker|both>|risk <medium|high>|fallback <ask|block>]",
+    "usage: /auto-approve [on|off|status|display <off|marker|toast|both>|risk <medium|high>|fallback <ask|block>]",
     "",
     "  (no argument)         toggle enabled and show current settings",
     "  on | off              enable / disable (persisted)",
     "  status                show current settings",
     "  display                show where auto-approval is shown",
-    "  display <off|marker|both>  where auto-approval is shown (persisted)",
+    "  display <off|marker|toast|both>  where auto-approval is shown (persisted)",
     "  risk                   show the block risk level",
     "  risk <medium|high>    block risk level (persisted)",
     "  fallback <ask|block>  policy when the risk threshold is crossed (persisted)",
@@ -125,10 +126,11 @@ const EN: Dictionary = {
   cmdOnDescription: "enable auto-approve",
   cmdOffDescription: "disable auto-approve",
   cmdStatusDescription: "show current settings",
-  cmdDisplayDescription: "set where approval markers appear (off|marker|both)",
+  cmdDisplayDescription: "set where approval markers appear (off|marker|toast|both)",
   cmdRiskDescription: "set the block risk level (medium|high)",
   cmdDisplayOffDescription: "no markers at all",
   cmdDisplayMarkerDescription: "tool-card line only",
+  cmdDisplayToastDescription: "chat toast only",
   cmdDisplayBothDescription: "tool-card line and chat toast",
   cmdRiskMediumDescription: "block medium and high risk",
   cmdRiskHighDescription: "block high risk only",
@@ -150,13 +152,13 @@ const ZH: Dictionary = {
   help: [
     "auto-approve — 使用裁判模型自动审批 bash 命令与 eval 代码",
     "",
-    "用法: /auto-approve [on|off|status|display <off|marker|both>|risk <medium|high>|fallback <ask|block>]",
+    "用法: /auto-approve [on|off|status|display <off|marker|toast|both>|risk <medium|high>|fallback <ask|block>]",
     "",
     "  (不带参数)           切换启用状态并显示当前配置",
     "  on | off             启用 / 停用(会持久化)",
     "  status               显示当前配置",
     "  display                显示自动审批的展示位置",
-    "  display <off|marker|both>  自动审批的展示位置(会持久化)",
+    "  display <off|marker|toast|both>  自动审批的展示位置(会持久化)",
     "  risk                   显示拦截的风险等级",
     "  risk <medium|high>   拦截的风险等级(会持久化)",
     "  fallback <ask|block> 风险阈值被越过时的策略(会持久化)",
@@ -200,10 +202,11 @@ const ZH: Dictionary = {
   cmdOnDescription: "启用 auto-approve",
   cmdOffDescription: "停用 auto-approve",
   cmdStatusDescription: "显示当前配置",
-  cmdDisplayDescription: "设置展示位置 (off|marker|both)",
+  cmdDisplayDescription: "设置展示位置 (off|marker|toast|both)",
   cmdRiskDescription: "设置拦截的风险等级 (medium|high)",
   cmdDisplayOffDescription: "不展示任何标记",
   cmdDisplayMarkerDescription: "仅工具卡片标记",
+  cmdDisplayToastDescription: "仅聊天提示",
   cmdDisplayBothDescription: "工具卡片标记与聊天提示",
   cmdRiskMediumDescription: "拦截中、高风险",
   cmdRiskHighDescription: "仅拦截高风险",
