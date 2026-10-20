@@ -106,7 +106,7 @@ function makeCommandCtx(): CmdCtx {
 }
 
 function makeModeManager(configDir: string): ModeManager {
-  return new ModeManager(new ConfigStore(quietLogger, configDir));
+  return new ModeManager(new ConfigStore(quietLogger, configDir, configDir, configDir));
 }
 
 async function runCommand(
@@ -135,14 +135,14 @@ describe("/auto-approve handler", () => {
     expect(fs.readFileSync(path.join(configDir, "auto-approve.json"), "utf-8")).toContain('"enabled": false');
 
     // A fresh store in the same directory sees the persisted state.
-    const reloaded = new ConfigStore(quietLogger, configDir);
+    const reloaded = new ConfigStore(quietLogger, configDir, configDir, configDir);
     expect(reloaded.config.enabled).toBe(false);
 
     // Second no-arg call toggles back on.
     const second = makeCommandCtx();
     await runCommand(modeManager, cmd.handler, "", second.ctx);
     expect(second.messages).toEqual(["auto-approve enabled."]);
-    const reloaded2 = new ConfigStore(quietLogger, configDir);
+    const reloaded2 = new ConfigStore(quietLogger, configDir, configDir, configDir);
     expect(reloaded2.config.enabled).toBe(true);
   });
 
@@ -204,7 +204,7 @@ describe("/auto-approve handler", () => {
     await runCommand(modeManager, cmd.handler, "display marker", ctx);
     expect(messages).toEqual(["display set to marker."]);
     expect(fs.readFileSync(path.join(configDir, "auto-approve.json"), "utf-8")).toContain('"display": "marker"');
-    expect(new ConfigStore(quietLogger, configDir).config.display).toBe("marker");
+    expect(new ConfigStore(quietLogger, configDir, configDir, configDir).config.display).toBe("marker");
 
     // An unknown display value does not throw — it shows the help.
     ({ ctx, messages } = makeCommandCtx());
@@ -215,7 +215,7 @@ describe("/auto-approve handler", () => {
     ({ ctx, messages } = makeCommandCtx());
     await runCommand(modeManager, cmd.handler, "display toast", ctx);
     expect(messages).toEqual(["display set to toast."]);
-    expect(new ConfigStore(quietLogger, configDir).config.display).toBe("toast");
+    expect(new ConfigStore(quietLogger, configDir, configDir, configDir).config.display).toBe("toast");
   });
 
   test("risk <level> validates, switches, and persists", async () => {
@@ -229,7 +229,7 @@ describe("/auto-approve handler", () => {
     await runCommand(modeManager, cmd.handler, "risk medium", ctx);
     expect(messages).toEqual(["block risk set to medium."]);
     expect(fs.readFileSync(path.join(configDir, "auto-approve.json"), "utf-8")).toContain('"blockRisk": "medium"');
-    expect(new ConfigStore(quietLogger, configDir).config.blockRisk).toBe("medium");
+    expect(new ConfigStore(quietLogger, configDir, configDir, configDir).config.blockRisk).toBe("medium");
 
     ({ ctx, messages } = makeCommandCtx());
     await runCommand(modeManager, cmd.handler, "risk extreme", ctx);
@@ -258,7 +258,7 @@ describe("/auto-approve handler", () => {
     await runCommand(modeManager, cmd.handler, "fallback ask", ctx);
     expect(messages).toEqual(["fallback policy set to ask."]);
     expect(fs.readFileSync(path.join(configDir, "auto-approve.json"), "utf-8")).toContain('"fallback": "ask"');
-    expect(new ConfigStore(quietLogger, configDir).config.fallback).toBe("ask");
+    expect(new ConfigStore(quietLogger, configDir, configDir, configDir).config.fallback).toBe("ask");
 
     ({ ctx, messages } = makeCommandCtx());
     await runCommand(modeManager, cmd.handler, "fallback yolo", ctx);

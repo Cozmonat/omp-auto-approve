@@ -221,6 +221,57 @@ describe("host plugin settings", () => {
     }
   });
 
+  test("live host changes preserve unrelated runtime choices and never rewrite the config file", () => {
+    const env = isolatedHome();
+    try {
+      const pluginsDir = path.join(env.home, ".omp", "plugins");
+      fs.mkdirSync(pluginsDir, { recursive: true });
+      const hostFile = path.join(pluginsDir, "omp-plugins.lock.json");
+      fs.writeFileSync(hostFile, JSON.stringify({ settings: { "auto-approve": { display: "both" } } }));
+      const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      store.update({ display: "marker" });
+      store.persist();
+      const saved = fs.readFileSync(store.configPath, "utf-8");
+      expect(store.config.display).toBe("marker");
+
+      fs.writeFileSync(hostFile, JSON.stringify({
+        settings: { "auto-approve": { display: "both", blockRisk: "medium" } },
+      }));
+      expect(store.config.blockRisk).toBe("medium");
+      expect(store.config.display).toBe("marker");
+
+      fs.writeFileSync(hostFile, JSON.stringify({ settings: { "auto-approve": { display: "toast" } } }));
+      expect(store.config.display).toBe("toast");
+      expect(store.config.blockRisk).toBe("high");
+      expect(fs.readFileSync(store.configPath, "utf-8")).toBe(saved);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  test("removing a live project override reveals the user setting, then the file setting", () => {
+    const env = isolatedHome();
+    try {
+      fs.writeFileSync(path.join(env.agent, "auto-approve.json"), JSON.stringify({ display: "off" }));
+      const pluginsDir = path.join(env.home, ".omp", "plugins");
+      fs.mkdirSync(pluginsDir, { recursive: true });
+      const hostFile = path.join(pluginsDir, "omp-plugins.lock.json");
+      fs.writeFileSync(hostFile, JSON.stringify({ settings: { "auto-approve": { display: "toast" } } }));
+      const projectDir = path.join(env.cwd, ".omp");
+      fs.mkdirSync(projectDir);
+      const overrideFile = path.join(projectDir, "plugin-overrides.json");
+      fs.writeFileSync(overrideFile, JSON.stringify({ settings: { "auto-approve": { display: "marker" } } }));
+      const store = new ConfigStore(undefined, env.agent, env.home, env.cwd);
+      expect(store.config.display).toBe("marker");
+      fs.unlinkSync(overrideFile);
+      expect(store.config.display).toBe("toast");
+      fs.unlinkSync(hostFile);
+      expect(store.config.display).toBe("off");
+    } finally {
+      env.cleanup();
+    }
+  });
+
   test("malformed host stores are ignored, never fatal", () => {
     const env = isolatedHome();
     try {

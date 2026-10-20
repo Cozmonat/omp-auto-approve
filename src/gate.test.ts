@@ -265,6 +265,34 @@ describe("BashGate", () => {
     await rig.dispose();
   });
 
+  test("host display changes take effect on the next call without recreating the gate", async () => {
+    const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], { replyText: lowVerdict });
+    const rig = makeRig(factory, children);
+    const projectDir = path.join(path.dirname(path.dirname(rig.store.configPath)), ".omp");
+    fs.mkdirSync(projectDir);
+    const file = path.join(projectDir, "plugin-overrides.json");
+    try {
+      for (const [display, marker, toast] of [
+        ["both", true, true],
+        ["marker", true, false],
+        ["toast", false, true],
+        ["off", false, false],
+      ] as const) {
+        fs.writeFileSync(file, JSON.stringify({ settings: { "auto-approve": { display } } }));
+        const updates: string[] = [];
+        const { ctx, notifications } = makeCtx();
+        const result = await rig.gate.execute(
+          { command: "pwd" }, undefined, (u: Update) => pushUpdates(updates, u), ctx,
+        );
+        expect(result.content[0].text).toBe("delegated");
+        expect(updates.some((line) => line.includes("approved"))).toBe(marker);
+        expect(notifications.some((n) => n.msg.includes("Auto-approved"))).toBe(toast);
+      }
+    } finally {
+      await rig.dispose();
+    }
+  });
+
   test("missing ctx.invokeTool produces a structured error", async () => {
     const { factory, children } = fakeChildFactory([{ replyText: lowVerdict }], {});
     const rig = makeRig(factory, children);
@@ -1041,17 +1069,24 @@ describe("BashGate silent-judge fallback", () => {
     await rig.dispose();
   });
 
-  test("with approval toasts off, the lane note is still shown on its own at info level", async () => {
+  test("marker mode keeps a fallback warning in the tool card without a toast", async () => {
     const { factory, children } = fakeChildFactory(
       [{ replyText: null }, { replyText: lowVerdict }],
       { replyText: lowVerdict },
     );
     const rig = makeRig(factory, children, { display: "marker" });
-    const { ctx, calls, notifications } = makeCtx();
-    await rig.gate.execute({ command: "ls -la" }, undefined, undefined, ctx);
-    expect(calls).toHaveLength(1);
-    expect(notifications).toEqual([{ msg: "⚠️ Judge produced no output (verdict from @tiny)", level: "info" }]);
-    await rig.dispose();
+    const { ctx, notifications } = makeCtx();
+    const updates: string[] = [];
+    try {
+      const result = await rig.gate.execute(
+        { command: "pwd" }, undefined, (u: Update) => pushUpdates(updates, u), ctx,
+      );
+      expect(result.content[0].text).toBe("delegated");
+      expect(notifications).toEqual([]);
+      expect(updates.some((line) => line.includes("approved") && line.includes("Judge produced no output"))).toBe(true);
+    } finally {
+      await rig.dispose();
+    }
   });
 
   test("a silent @tiny is retried on @smol", async () => {

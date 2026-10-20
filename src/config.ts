@@ -204,13 +204,14 @@ const PERSISTABLE_KEYS: readonly (keyof AutoApproveConfig)[] = [
 ];
 
 /**
- * Configuration store.  Loads once at construction; exposes typed accessors,
- * runtime mutation (update) and selective write-back (persist) so slash
- * commands can change approval settings without clobbering user-edited
- * fields in the config file.
+ * Configuration store. File-only settings load once; host settings refresh
+ * when config is read, so Settings UI / CLI edits affect the next operation.
+ * Runtime mutation and selective write-back let slash commands change only
+ * their chosen keys without clobbering user-edited fields.
  */
 export class ConfigStore {
-  readonly config: AutoApproveConfig;
+  private readonly currentConfig: AutoApproveConfig;
+  private hostSettings: Record<string, unknown>;
   readonly configPath: string;
   /** Runtime-changed persistable keys: string-keyed membership table. */
   private dirty: Record<string, true> = {};
@@ -223,7 +224,22 @@ export class ConfigStore {
   ) {
     const dir = configDir ?? getConfigDir();
     this.configPath = path.join(dir, "auto-approve.json");
-    this.config = this.load();
+    this.hostSettings = readHostPluginSettings(this.cwd, this.home);
+    this.currentConfig = applyHostSettings(this.load(), this.hostSettings, this.logger);
+  }
+
+  /** Apply only changed host keys: unchanged host values must not undo a
+   *  more recent slash-command choice or an unrelated runtime setting. */
+  get config(): AutoApproveConfig {
+    const host = readHostPluginSettings(this.cwd, this.home);
+    let merged: AutoApproveConfig | undefined;
+    for (const key of HOST_SETTING_KEYS) {
+      if (host[key] === this.hostSettings[key]) continue;
+      merged ??= applyHostSettings(this.load(), host, this.logger);
+      Object.assign(this.currentConfig, { [key]: merged[key as keyof AutoApproveConfig] });
+    }
+    this.hostSettings = host;
+    return this.currentConfig;
   }
 
   private load(): AutoApproveConfig {
@@ -239,18 +255,19 @@ export class ConfigStore {
       this.logger?.log(`config load failed, using defaults: ${e instanceof Error ? e.message : String(e)}`);
       raw = undefined;
     }
-    return applyHostSettings(mergeConfig(raw), readHostPluginSettings(this.cwd, this.home), this.logger);
+    return mergeConfig(raw);
   }
 
   /** Apply a partial change to the in-memory config (immediate effect).
    *  Only persistable keys are remembered; anything else is ignored so a
    *  runtime write can never silently persist a file-only field. */
   update(partial: Partial<AutoApproveConfig>): void {
+    const config = this.config;
     for (const key of PERSISTABLE_KEYS) {
       const value = partial[key];
       if (value === undefined) continue;
       this.dirty[key] = true;
-      Object.assign(this.config, { [key]: value });
+      Object.assign(config, { [key]: value });
     }
     this.logger?.log(`config updated: ${Object.keys(this.dirty).join(",")}`);
   }
@@ -265,7 +282,7 @@ export class ConfigStore {
         const parsed: unknown = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
         if (parsed && typeof parsed === "object") raw = parsed as Record<string, unknown>;
       }
-      for (const key of Object.keys(this.dirty)) raw[key] = this.config[key as keyof AutoApproveConfig];
+      for (const key of Object.keys(this.dirty)) raw[key] = this.currentConfig[key as keyof AutoApproveConfig];
       const dir = path.dirname(this.configPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(this.configPath, JSON.stringify(raw, null, 2), "utf-8");

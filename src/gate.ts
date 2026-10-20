@@ -357,30 +357,25 @@ export class ToolGate {
     const decision = decide(verdict, cfg.blockRisk);
     log(`decision=${decision.verdict} reason=${decision.reason} outcome=${outcome.kind}`);
 
-    // Kept lane note: the verdict came from a fallback model because the
-    // stage-1 lane failed — the operator should fix the judge role.  It goes
-    // out at info level (the host prefixes warning toasts with "Warning:";
-    // the ⚠️ carries the signal) and rides on whichever approval toast
-    // follows, since consecutive info toasts collapse into one status line.
-    const laneNote =
-      laneFailure && ctx.hasUI
-        ? t.format(laneFailure === "native" ? "notifyNativeFailed" : "notifyJudgeSilent", fallbackModel ?? "")
-        : undefined;
-    const notifyApproval = (label: string, summary: string | undefined): void => {
-      const approved = surfaces.notify ? t.format("notifyApproved", label, summary ? `: ${summary}` : "") : undefined;
-      const toast = [approved, laneNote].filter((line) => line !== undefined).join("\n");
-      if (toast) this.notify(ctx, toast, "info");
+    // Keep judge-lane diagnostics on the selected approval surface instead
+    // of forcing a toast in marker/off mode. Blocked verdicts still toast.
+    const laneNote = laneFailure
+      ? t.format(laneFailure === "native" ? "notifyNativeFailed" : "notifyJudgeSilent", fallbackModel ?? "")
+      : undefined;
+    const showApproval = (label: string, summary: string | undefined): void => {
+      const suffix = summary ? `: ${summary}` : "";
+      if (surfaces.marker) {
+        const marker = t.format("markerApproved", label, suffix);
+        onUpdate?.({ content: [{ type: "text", text: laneNote ? `${marker}\n${laneNote}` : marker }] });
+      }
+      if (ctx.hasUI && surfaces.notify) {
+        const approved = t.format("notifyApproved", label, suffix);
+        this.notify(ctx, laneNote ? `${approved}\n${laneNote}` : approved, "info");
+      }
     };
 
     if (decision.verdict === "allow") {
-      const label = riskLabel(t, verdict?.risk);
-      const summary = verdict?.summary;
-      if (surfaces.marker) {
-        onUpdate?.({
-          content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }],
-        });
-      }
-      notifyApproval(label, summary);
+      showApproval(riskLabel(t, verdict?.risk), verdict?.summary);
       return this.delegate(params, signal, onUpdate, ctx);
     }
 
@@ -409,12 +404,7 @@ export class ToolGate {
       if (deepDecision.verdict === "allow") {
         // The deeper analysis re-checked the subject and cleared it: no real
         // risk at the configured threshold, so approve without a dialog.
-        const label = t.format("riskDeep");
-        const summary = deep?.verdict?.summary;
-        if (surfaces.marker) {
-          onUpdate?.({ content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }] });
-        }
-        notifyApproval(label, summary);
+        showApproval(t.format("riskDeep"), deep?.verdict?.summary);
         log(`deep analysis cleared the subject, auto-approving (risk=${deep?.verdict?.risk ?? "unknown"})`);
         return this.delegate(params, signal, onUpdate, ctx);
       }
@@ -430,12 +420,7 @@ export class ToolGate {
           log("aborted after user approval, not executing");
           return { content: [{ type: "text", text: "(aborted)" }], details: { aborted: true } };
         }
-        const label = t.format("riskUser");
-        const summary = verdict?.summary;
-        if (surfaces.marker) {
-          onUpdate?.({ content: [{ type: "text", text: t.format("markerApproved", label, summary ? `: ${summary}` : "") }] });
-        }
-        notifyApproval(label, summary);
+        showApproval(t.format("riskUser"), verdict?.summary);
         log("user approved, delegating to native");
         return this.delegate(params, signal, onUpdate, ctx);
       }

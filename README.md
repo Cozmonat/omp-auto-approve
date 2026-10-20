@@ -72,7 +72,7 @@ Use these commands without restarting OMP. Changes persist, and command argument
 /auto-approve fallback ask      # offer allow-once/deny when a UI and summary are available
 ```
 
-Blocked results remain visible even with `display: "off"`. Turning the extension off bypasses all model review; it does not make commands safer.
+Approval feedback, including judge-fallback diagnostics, follows the selected display mode: `marker` does not produce approval toasts, and `toast` does not stream assessment lines into the tool card. Blocked results still produce a warning toast in UI sessions, even with `display: "off"`. Slash-command confirmations are also always shown. Turning the extension off bypasses all model review; it does not make commands safer.
 
 While enabled, Auto Approve appends safe-call guidance to the agent's system prompt before each request, preserving the host's existing instructions. It encourages inspection before mutation, explicit targets, and bounded, reversible changes, and forbids evading a denial through another tool or weakening the classifier. Assessment failures are distinguished from unsafe-operation verdicts. Runtime on/off changes affect guidance starting with the next request; disabling does not retract instructions from an already-running request. Guidance is advisory, not a guarantee of approval or safety.
 
@@ -91,7 +91,7 @@ Optional settings live in `~/.omp/agent/auto-approve.json`. Missing values use t
 | `contextMaxChars` | `3000` | Total character budget for conversation excerpts. `0` omits conversation context. |
 | `scriptMaxChars` | `4000` | Per-file character budget for referenced scripts. `0` disables script-file reads. |
 
-`enabled`, `display`, `blockRisk`, and `fallback` are also available in the OMP Settings UI and through `omp plugin config get|set`. Host plugin settings take precedence over the JSON file.
+`enabled`, `display`, `blockRisk`, and `fallback` are also available in the OMP Settings UI and through `omp plugin config get|set`. Saved host-setting changes take effect on the next tool call or settings read; no extension reload is needed. Project overrides take precedence over user host settings, which take precedence over the JSON file. A slash-command choice takes effect immediately and is not reset by unchanged host settings; a later host-setting change to that key takes precedence again. On restart, host settings take precedence over persisted slash-command choices.
 
 `subjectMaxChars` is retired and has no effect. An existing stored value may remain as an unknown user key when other settings are persisted. Conversation and referenced-script budgets are unchanged.
 
