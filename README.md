@@ -37,11 +37,39 @@ The full command or eval code is submitted at every review stage, without a plug
 
 The second review adds model latency only to flagged operations. After approval, execution is delegated to OMP's built-in tool, preserving its normal shell, output, cancellation, and eval behavior.
 
-Normal, non-forced pushes to the intended repository's feature or PR branch are **medium risk**, not high solely because they reach a remote. A checkout or worktree under `/tmp` (including `/private/tmp`) is still a project; its location alone does not raise push risk. At the default `blockRisk: "high"`, these pushes are eligible for automatic approval. The models still assess the destination, user intent, refspec, secret exposure, and production impact.
+### Risk is about consequences
 
-Lease-pinned force-pushes that update the same kind of branch, such as after a rebase, are also **medium risk**. Lease-pinned means `--force-with-lease=<ref>:<expected-sha>`, or `--force-with-lease` together with `--force-if-includes`: the push fails instead of overwriting remote commits the agent has not seen. These stay **high risk**: bare `--force` and `+refspec` pushes, `--force-with-lease` without an expected commit or `--force-if-includes`, any force-push to a shared branch (`main`, `master`, `develop`, `release/*`, `staging`, `production`, or the default branch), and remote branch/tag deletions.
+All review stages use the same risk levels for shell commands and eval code. Models assess affected assets, ownership, scope, data flow, and recovery; the list below names consequences that reliably count as high risk, not an exhaustive allow or deny list of commands.
 
-GitHub permissions and branch protection reduce risk but do not replace this assessment: a writable wrong branch can accept a push, and CI checks often gate merging rather than prevent pushes. Pushes can also publish secrets or trigger deployments.
+| Risk | Meaning |
+|---|---|
+| **Low** | Non-sensitive observation or computation without meaningful mutation, disclosure, or disruption. |
+| **Medium** | Bounded, recoverable task changes. |
+| **High** | Credible risk of losing unique user data or uncommitted work; exposing secrets or private information to an unintended audience, including publishing to a destination the task did not designate for public release; broad or hard-to-recover damage to valuable state; significant service disruption or cost; or persistent security weakening. |
+
+The important distinctions are:
+
+- **User work versus disposable output.** Overwriting one unbacked user document can be high risk even inside the project; removing reproducible generated output can be medium. Version control does not necessarily preserve uncommitted edits, and recreating an empty resource does not restore its contents.
+- **Actual scope, not location or tool.** A worktree, temporary directory, subprocess, or remote API does not automatically raise or lower risk. Models assess the actual target, affected users, recovery path, and safeguards against overwriting concurrent work.
+- **Intended data flow versus disclosure.** Public downloads, ordinary task tooling, and existing credentials used with their intended service are not automatically exfiltration. Sending private information to an unintended recipient—or printing secrets into a transcript—is high risk. Software provenance, privileges, and side effects still matter.
+- **Authorization versus intrinsic risk.** Task context establishes intended scope, not blanket permission for unrelated effects. A user's profession or an agent's claim of approval is not authorization; explicit intent does not make irreversible damage low risk.
+- **Evidence versus assumptions.** Models must not invent backups, isolation, or rollback guarantees. Materially unresolved destructive targets or sensitive recipients are high risk; mere tool unfamiliarity or recoverable mutation is not a reason to deny an otherwise bounded action.
+
+At the default `blockRisk: "high"`, ordinary dependency setup, generated-output cleanup, publication the task asks for to the destination it names, and bounded remote maintenance are eligible for automatic approval. A medium-risk action is not denied merely because it changes state. These are model assessments, not exemptions or sandbox guarantees; high-risk effects remain subject to second review and the configured block-or-ask policy.
+
+#### What stays high
+
+- Deleting or overwriting unique data that has no surviving copy.
+- Force-pushing or rewriting history on a shared branch (`main`, `master`, `develop`, `release/*`, `staging`, `production`, or the default branch), and any push using bare `--force`, a `+refspec`, or a lease with neither an expected commit nor `--force-if-includes`.
+- Deleting remote branches or tags.
+- Fetching and running unreviewed code with privileged access.
+- Changing credentials, authentication, or CI configuration.
+- Writing to production.
+- System-wide changes.
+- Exposing secrets or private information to an unintended audience, including printing a secret into output.
+- Publishing to a destination the task did not designate for public release — including one that is public by name or configuration, which reaches everyone.
+
+A `git push --force-with-lease=<ref>:<expected-sha>` (or `--force-with-lease` with `--force-if-includes`) that updates only the intended repository's feature or PR branch is medium risk, like an ordinary non-forced push, and stays eligible for automatic approval at the default `blockRisk: "high"`.
 
 ### Headless sessions
 

@@ -3,11 +3,11 @@
  *
  * Models that run multi-step tasks through script files (`bash run.sh`,
  * `python script.py`) hand the judge a command whose real payload lives in
- * a file: without the contents, "runs a script" is indistinguishable from
- * "installs and runs unreviewed code".  extractScriptPaths pulls the
- * script-path tokens out of the command, collectScriptContents reads those
- * files (bounded, binary-checked, fail-soft) so both prompts can judge what
- * the script actually does, and formatScriptSection renders them as an
+ * a file: without the contents, the judge cannot assess its actual effects.
+ * extractScriptPaths pulls the script-path tokens out of the command,
+ * collectScriptContents reads those files (bounded, binary-checked,
+ * fail-soft) so both prompts can judge what the script actually does, and
+ * formatScriptSection renders them as an
  * untrusted prompt section.  A file that cannot be read is still reported
  * (missing / unreadable / too large / binary) so the judge knows its
  * absence of contents is not its absence of risk.

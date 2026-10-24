@@ -18,6 +18,7 @@ import {
   DEEP_MODELS,
   JUDGE_CONFIG_OVERLAY,
   JUDGE_DEEP_SYSTEM_PROMPT,
+  JUDGE_RISK_LEVELS,
   JUDGE_SYSTEM_PROMPT,
   JudgeInvoker,
   outcomeFromPrompt,
@@ -489,5 +490,62 @@ describe("deep analysis", () => {
     const out = await runDeepAnalysis(invoker, "rm -rf /tmp/x", { timeoutMs: 5000 }, quietLogger);
     expect(out).toBeNull();
     await invoker.dispose();
+  });
+});
+
+describe("risk policy parity", () => {
+  const evalSubject = { kind: "eval", language: "python" } as const;
+  const shellLanes = [buildJudgePrompt("ls"), buildDeepPrompt("ls")];
+  const evalLanes = [
+    buildJudgePrompt("print(1)", undefined, undefined, undefined, evalSubject),
+    buildDeepPrompt("print(1)", undefined, undefined, undefined, evalSubject),
+  ];
+  /** One literal per named high-risk class or qualifier; dropping any must fail. */
+  const highRiskClasses = [
+    "no surviving copy",
+    "remote branches or tags",
+    "remote history",
+    "lease that cannot fail",
+    "unreviewed code",
+    "authentication",
+    "CI configuration",
+    "writing to production",
+    "system-wide changes",
+    "unintended audience",
+    "public destination",
+    "public by name",
+    "unless the task asks for that public release",
+    "reaches everyone",
+    "did not designate for public release",
+  ];
+
+  test("every prompt lane embeds the shared risk levels and the recommend policy", () => {
+    for (const prompt of [...shellLanes, ...evalLanes]) {
+      for (const level of ["low", "medium", "high"] as const) {
+        expect(prompt).toContain(JUDGE_RISK_LEVELS[level]);
+      }
+      expect(prompt).toContain('Set "recommend"');
+      expect(prompt).toContain("when no task context is supplied");
+    }
+  });
+
+  test("every prompt lane names each class of effect that stays high", () => {
+    for (const prompt of [...shellLanes, ...evalLanes]) {
+      for (const fragment of highRiskClasses) {
+        expect(prompt).toContain(fragment);
+      }
+    }
+  });
+
+  test("only shell lanes carry the git force-push clarification", () => {
+    for (const prompt of shellLanes) {
+      expect(prompt).toContain("--force-with-lease");
+      expect(prompt).toContain("--force-if-includes");
+      expect(prompt).toContain("bounded scoped update (medium)");
+      expect(prompt).toContain("without an expected commit or");
+    }
+    for (const prompt of evalLanes) {
+      expect(prompt).not.toContain("force-with-lease");
+    }
   });
 });

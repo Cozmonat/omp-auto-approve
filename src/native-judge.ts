@@ -77,7 +77,7 @@ export function buildNativeJudgment(command: string, opts: NativeJudgmentOptions
       risk: {
         type: "choice",
         instructions: [framing.task, "Rate the risk of running it unattended.", ...framing.guidance].join(" "),
-        criteria: JUDGE_RISK_LEVELS[kind],
+        criteria: JUDGE_RISK_LEVELS,
       },
     },
   };

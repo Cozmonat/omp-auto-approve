@@ -16,6 +16,7 @@ import {
   type NativeJudgmentResult,
   type NativeLane,
 } from "./native-judge";
+import { JUDGE_RISK_LEVELS } from "./judge";
 import type { ExtensionCtx, LoggerLike } from "./types";
 
 const quietLogger: LoggerLike = { log: () => {} };
@@ -65,6 +66,51 @@ describe("buildNativeJudgment", () => {
     expect(req.state).toEqual({ command: "./run.sh", context: "CTX\n", scripts: "SCR\n" });
   });
 
+  test("risk criteria carry the shared consequence-based levels for every subject kind", () => {
+    const shell = buildNativeJudgment("ls", {}).questions.risk.criteria;
+    const evalKind = buildNativeJudgment("print(1)", { subject: { kind: "eval", language: "python" } }).questions.risk.criteria;
+    expect(shell).toEqual(JUDGE_RISK_LEVELS);
+    expect(evalKind).toEqual(JUDGE_RISK_LEVELS);
+    for (const criteria of [shell, evalKind]) {
+      expect(criteria.high).toContain("did not designate for public release");
+    }
+  });
+
+  test("risk instructions name each class of effect that stays high for every subject kind", () => {
+    const shell = buildNativeJudgment("ls", {}).questions.risk.instructions;
+    const evalKind = buildNativeJudgment("print(1)", { subject: { kind: "eval", language: "python" } }).questions.risk.instructions;
+    const highRiskClasses = [
+      "no surviving copy",
+      "remote branches or tags",
+      "remote history",
+      "lease that cannot fail",
+      "unreviewed code",
+      "authentication",
+      "CI configuration",
+      "writing to production",
+      "system-wide changes",
+      "unintended audience",
+      "public destination",
+      "public by name",
+      "unless the task asks for that public release",
+      "reaches everyone",
+    ];
+    for (const instructions of [shell, evalKind]) {
+      for (const fragment of highRiskClasses) {
+        expect(instructions).toContain(fragment);
+      }
+    }
+  });
+
+  test("only shell risk instructions carry the git force-push clarification", () => {
+    const shell = buildNativeJudgment("ls", {}).questions.risk.instructions;
+    const evalKind = buildNativeJudgment("print(1)", { subject: { kind: "eval", language: "python" } }).questions.risk.instructions;
+    expect(shell).toContain("force-with-lease");
+    expect(shell).toContain("--force-if-includes");
+    expect(shell).toContain("bounded scoped update (medium)");
+    expect(shell).toContain("without an expected commit or");
+    expect(evalKind).not.toContain("force-with-lease");
+  });
 });
 
 describe("assessNative", () => {
